@@ -5,8 +5,7 @@
 builder = "dockerfile"
 
 [deploy]
-startCommand = "node dist/server.js"
+# Run migrations then start server (pre-deploy often can't reach DB; start command runs in app container)
+startCommand = "/bin/sh -c \"npx prisma migrate deploy && node dist/server.js\""
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 10
-# Run DB migrations before each deploy (Railway calls this "Pre-Deploy Command")
-preDeployCommand = "npx prisma migrate deploy"

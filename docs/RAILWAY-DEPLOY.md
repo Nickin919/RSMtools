@@ -34,29 +34,15 @@ git push -u origin main
 
 The repo includes a **custom Dockerfile** so the built frontend is kept in the image (Nixpacks’ default flow overwrites it). Railway will use this Dockerfile when present.
 
-### 4a. Run migrations before each deploy (Pre-Deploy Command)
+### 4a. Run migrations before the app starts
 
-Railway runs a **Pre-Deploy Command** after the build and before the app starts—use it for `prisma migrate deploy`.
-
-**Option A – Use the repo config (recommended)**  
-This repo’s `railway.toml` already sets:
+Migrations run in the **start command** (not Pre-Deploy) so they execute in the same container that can reach the database. This repo’s `railway.toml` sets:
 
 ```toml
-preDeployCommand = "npx prisma migrate deploy"
+startCommand = "/bin/sh -c \"npx prisma migrate deploy && node dist/server.js\""
 ```
 
-Commit and push so Railway picks it up; no dashboard change needed.
-
-**Option B – Set it in the dashboard**  
-If you prefer the UI:
-
-1. In the Railway project, click your **app service** (e.g. **RSMtools**), not Postgres.
-2. Go to **Settings** → **Build**.
-3. Find **Pre-Deploy Command** (not “Release Command”—Railway uses “Pre-Deploy”).
-4. Enter: `npx prisma migrate deploy`
-5. Save.
-
-To open the dashboard from the repo: `railway open` (with the project linked).
+No dashboard change needed. To open the dashboard from the repo: `railway open` (with the project linked).
 
 ## 5. Deploy and run seed (first time)
 
