@@ -10,6 +10,7 @@ import {
   uploadPDFsToContract,
   batchUploadPDFs,
   updateContractItem,
+  recheckAllItems,
   bulkApplySellPrice,
   deleteContractItem,
   downloadContractCSV,
@@ -28,6 +29,7 @@ router.get('/:id', getContract)
 router.patch('/:id', renameContract)
 router.delete('/:id', deleteContract)
 router.post('/:id/items/upload-pdfs', uploadMultiplePDFs, uploadPDFsToContract)
+router.post('/:id/recheck-all', recheckAllItems)
 router.post('/:id/items/bulk-sell-price', bulkApplySellPrice)
 router.patch('/:id/items/:itemId', updateContractItem)
 router.delete('/:id/items/:itemId', deleteContractItem)

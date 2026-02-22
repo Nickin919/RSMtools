@@ -321,6 +321,43 @@ export async function updateContractItem(req: Request, res: Response) {
   return res.status(200).json({ item: updated, inCatalog: !!partId })
 }
 
+// ── Recheck all items in a contract against master catalog ────────────────
+
+/**
+ * POST /api/price-contracts/:id/recheck-all
+ * Re-runs the master-catalog lookup for every item in the contract
+ * and updates partId accordingly.
+ */
+export async function recheckAllItems(req: Request, res: Response) {
+  const { id: contractId } = req.params
+  const user = req.user!
+
+  const contract = await prisma.priceContract.findUnique({ where: { id: contractId } })
+  if (!contract) return res.status(404).json({ message: 'Contract not found.' })
+  if (!canAccess(user.id, user.role, contract.createdById)) return res.status(403).json({ message: 'Access denied.' })
+
+  const items = await prisma.priceContractItem.findMany({
+    where: { contractId, partNumber: { not: null } },
+    select: { id: true, partNumber: true },
+  })
+
+  let matched = 0, unmatched = 0
+  for (const item of items) {
+    if (!item.partNumber) { unmatched++; continue }
+    const part = await prisma.part.findFirst({
+      where: { partNumber: item.partNumber, catalog: { isMaster: true } },
+      select: { id: true },
+    })
+    await prisma.priceContractItem.update({
+      where: { id: item.id },
+      data: { partId: part?.id ?? null },
+    })
+    if (part) matched++; else unmatched++
+  }
+
+  return res.status(200).json({ total: items.length, matched, unmatched })
+}
+
 // ── Bulk apply sell price margin to selected items ────────────────────────
 
 /**

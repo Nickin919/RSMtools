@@ -67,6 +67,10 @@ export default function ContractDetail() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [applyingMargin, setApplyingMargin] = useState(false)
 
+  // Recheck all
+  const [recheckingAll, setRecheckingAll] = useState(false)
+  const [recheckResult, setRecheckResult] = useState<{ matched: number; unmatched: number } | null>(null)
+
   // Rename
   const [editingName, setEditingName] = useState(false)
   const [renameValue, setRenameValue] = useState('')
@@ -181,6 +185,19 @@ export default function ContractDetail() {
     if (res.ok) { setContract(prev => prev ? { ...prev, name: renameValue.trim() } : null); setEditingName(false) }
   }
 
+  // ── Recheck all items ───────────────────────────────────────────────────────
+  async function recheckAll() {
+    if (!id) return
+    setRecheckingAll(true); setRecheckResult(null)
+    try {
+      const res = await fetch(`/api/price-contracts/${id}/recheck-all`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await res.json().catch(() => ({}))
+      if (res.ok) { setRecheckResult({ matched: data.matched, unmatched: data.unmatched }); fetchContract() }
+    } finally { setRecheckingAll(false) }
+  }
+
   // ── Download CSV ────────────────────────────────────────────────────────────
   async function downloadCsv() {
     if (!contract) return
@@ -239,21 +256,52 @@ export default function ContractDetail() {
           <p className="mt-0.5 text-xs text-gray-400">{new Date(contract.createdAt).toLocaleDateString()}</p>
         </div>
         <div className="flex shrink-0 gap-2">
+          <button
+            type="button" onClick={recheckAll} disabled={recheckingAll || productItems.length === 0}
+            className="btn-secondary py-1.5 px-4 text-sm disabled:opacity-40"
+            title="Re-run master catalog lookup for all items"
+          >
+            {recheckingAll ? '⟳ Checking…' : '⟳ Recheck All'}
+          </button>
           <button type="button" onClick={downloadCsv} className="btn-primary py-1.5 px-4 text-sm">Download CSV</button>
           <button type="button" onClick={deleteContract} className="btn-secondary py-1.5 px-4 text-sm text-red-500">Delete</button>
         </div>
       </div>
 
+      {/* ── Recheck result toast ── */}
+      {recheckResult && (
+        <div className="mt-3 flex items-center justify-between rounded-lg bg-blue-50 px-4 py-2 text-sm text-blue-800">
+          <span>Recheck complete — <strong>{recheckResult.matched}</strong> matched, <strong>{recheckResult.unmatched}</strong> not found in catalog</span>
+          <button onClick={() => setRecheckResult(null)} className="ml-4 text-blue-500 hover:text-blue-700">✕</button>
+        </div>
+      )}
+
       {/* ── Catalog validation summary ── */}
       {productItems.length > 0 && (
-        <div className="mt-4 flex gap-3 flex-wrap">
-          <div className="flex items-center gap-1.5 rounded-full bg-green-50 px-3 py-1 text-sm text-green-700">
-            ✓ <span><strong>{inCatalogCount}</strong> in master catalog</span>
-          </div>
-          {notInCatalogCount > 0 && (
-            <div className="flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-sm text-amber-700">
-              ⚠ <span><strong>{notInCatalogCount}</strong> not found — edit part # and Recheck</span>
+        <div className="mt-3 flex gap-3 flex-wrap">
+          {inCatalogCount === 0 && notInCatalogCount > 0 ? (
+            <div className="flex w-full items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+              <span className="text-lg">⚠</span>
+              <div>
+                <p className="font-semibold">Master catalog appears to be empty</p>
+                <p className="mt-0.5">
+                  None of the {notInCatalogCount} parts in this contract were found in the master catalog.
+                  {' '}<a href="/catalog" className="underline font-medium">Upload your master catalog CSV</a> first,
+                  then click <strong>Recheck All</strong> to match parts automatically.
+                </p>
+              </div>
             </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-1.5 rounded-full bg-green-50 px-3 py-1 text-sm text-green-700">
+                ✓ <span><strong>{inCatalogCount}</strong> in master catalog</span>
+              </div>
+              {notInCatalogCount > 0 && (
+                <div className="flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-sm text-amber-700">
+                  ⚠ <span><strong>{notInCatalogCount}</strong> not found — edit part # and Recheck</span>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
