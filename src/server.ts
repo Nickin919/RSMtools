@@ -36,12 +36,18 @@ app.use('/api', routes)
 
 // Serve built frontend (login app) when present (e.g. production on Railway)
 const frontendDir = path.join(__dirname, '..', 'frontend', 'dist')
-if (fs.existsSync(frontendDir)) {
+const hasFrontend = fs.existsSync(frontendDir)
+console.log('[Startup] frontend dir:', frontendDir, 'exists:', hasFrontend)
+if (hasFrontend) {
   app.use(express.static(frontendDir))
   app.get('*', (_req, res) => {
     res.sendFile(path.join(frontendDir, 'index.html'))
   })
 } else {
+  console.warn('[Startup] No frontend build at', frontendDir, '- only /api will respond')
+  app.get('/', (_req, res) => {
+    res.status(404).type('text/plain').send('Frontend not built. Check Dockerfile / build logs.')
+  })
   app.use((_req, res) => {
     res.status(404).json({ message: 'Not found' })
   })
