@@ -418,9 +418,10 @@ export async function downloadContractCSV(req: Request, res: Response) {
   if (!contract) return res.status(404).json({ message: 'Contract not found.' })
   if (!canAccess(user.id, user.role, contract.createdById)) return res.status(403).json({ message: 'Access denied.' })
 
+  // Quote every field so empty/null columns and commas in text don't shift columns in Excel
   const csvEscape = (v: unknown): string => {
     const s = String(v ?? '')
-    return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s
+    return `"${s.replace(/"/g, '""')}"`
   }
 
   const fmtMoney = (n: number | null | undefined) =>
