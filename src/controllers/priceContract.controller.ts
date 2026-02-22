@@ -137,12 +137,31 @@ export async function getContract(req: Request, res: Response) {
     where: { id },
     include: {
       createdBy: { select: { id: true, firstName: true, lastName: true, email: true } },
-      items: { orderBy: { createdAt: 'asc' } },
+      items: {
+        orderBy: { createdAt: 'asc' },
+        include: {
+          part: { select: { id: true, partNumber: true, series: true, description: true, basePrice: true } },
+        },
+      },
     },
   })
   if (!contract) return res.status(404).json({ message: 'Contract not found.' })
   if (!canAccess(user.id, user.role, contract.createdById)) return res.status(403).json({ message: 'Access denied.' })
   return res.status(200).json({ contract })
+}
+
+// ── Rename contract ────────────────────────────────────────────────────────
+
+export async function renameContract(req: Request, res: Response) {
+  const { id } = req.params
+  const user = req.user!
+  const { name } = req.body ?? {}
+  if (!name || typeof name !== 'string' || !name.trim()) return res.status(400).json({ message: 'Name is required.' })
+  const contract = await prisma.priceContract.findUnique({ where: { id } })
+  if (!contract) return res.status(404).json({ message: 'Contract not found.' })
+  if (!canAccess(user.id, user.role, contract.createdById)) return res.status(403).json({ message: 'Access denied.' })
+  const updated = await prisma.priceContract.update({ where: { id }, data: { name: name.trim() } })
+  return res.status(200).json({ contract: updated })
 }
 
 // ── Delete contract ────────────────────────────────────────────────────────
@@ -277,11 +296,11 @@ export async function updateContractItem(req: Request, res: Response) {
   const existing = await prisma.priceContractItem.findFirst({ where: { id: itemId, contractId } })
   if (!existing) return res.status(404).json({ message: 'Item not found.' })
 
-  const { partNumber: bodyPN, costPrice: bodyCP } = req.body ?? {}
+  const { partNumber: bodyPN, costPrice: bodyCP, suggestedSellPrice: bodySP } = req.body ?? {}
   const partNumber = typeof bodyPN === 'string' && bodyPN.trim() ? bodyPN.trim() : existing.partNumber
   const costPrice = typeof bodyCP === 'number' && bodyCP >= 0 ? bodyCP : existing.costPrice
+  const suggestedSellPrice = typeof bodySP === 'number' && bodySP >= 0 ? bodySP : existing.suggestedSellPrice
 
-  // Re-check master catalog
   let partId: string | null = null
   if (partNumber) {
     const part = await prisma.part.findFirst({
@@ -293,10 +312,46 @@ export async function updateContractItem(req: Request, res: Response) {
 
   const updated = await prisma.priceContractItem.update({
     where: { id: itemId },
-    data: { partNumber: partNumber || null, costPrice, partId },
+    data: { partNumber: partNumber || null, costPrice, partId, suggestedSellPrice },
+    include: {
+      part: { select: { id: true, partNumber: true, series: true, description: true, basePrice: true } },
+    },
   })
 
   return res.status(200).json({ item: updated, inCatalog: !!partId })
+}
+
+// ── Bulk apply sell price margin to selected items ────────────────────────
+
+/**
+ * POST /api/price-contracts/:id/items/bulk-sell-price
+ * Body: { itemIds: string[], marginPercent: number }
+ * suggestedSellPrice = costPrice / (1 - marginPercent/100)
+ */
+export async function bulkApplySellPrice(req: Request, res: Response) {
+  const { id: contractId } = req.params
+  const user = req.user!
+
+  const contract = await prisma.priceContract.findUnique({ where: { id: contractId } })
+  if (!contract) return res.status(404).json({ message: 'Contract not found.' })
+  if (!canAccess(user.id, user.role, contract.createdById)) return res.status(403).json({ message: 'Access denied.' })
+
+  const { itemIds, marginPercent } = req.body ?? {}
+  if (!Array.isArray(itemIds) || itemIds.length === 0) return res.status(400).json({ message: 'itemIds required.' })
+  const margin = parseFloat(marginPercent)
+  if (isNaN(margin) || margin < 0 || margin >= 100) return res.status(400).json({ message: 'marginPercent must be 0–99.' })
+
+  const divisor = 1 - margin / 100
+  let updated = 0
+  for (const itemId of itemIds as string[]) {
+    const item = await prisma.priceContractItem.findFirst({ where: { id: itemId, contractId } })
+    if (!item) continue
+    const suggestedSellPrice = item.costPrice / divisor
+    await prisma.priceContractItem.update({ where: { id: itemId }, data: { suggestedSellPrice } })
+    updated++
+  }
+
+  return res.status(200).json({ updated })
 }
 
 // ── Delete a single contract item ─────────────────────────────────────────
