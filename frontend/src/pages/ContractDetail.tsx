@@ -9,6 +9,7 @@ interface Part {
   series: string | null
   description: string
   basePrice: number | null
+  minQty?: number
 }
 
 interface Item {
@@ -73,6 +74,12 @@ export default function ContractDetail() {
   const [applyingFixed, setApplyingFixed] = useState(false)
   const [sellPriceEdit, setSellPriceEdit] = useState<{ itemId: string; value: string } | null>(null)
   const [savingSellPriceId, setSavingSellPriceId] = useState<string | null>(null)
+
+  // MOQ: column bulk + per-row edit (same row selection as sell price)
+  const [fixedMoq, setFixedMoq] = useState('')
+  const [applyingMoq, setApplyingMoq] = useState(false)
+  const [moqEdit, setMoqEdit] = useState<{ itemId: string; value: string } | null>(null)
+  const [savingMoqId, setSavingMoqId] = useState<string | null>(null)
 
   // Recheck all
   const [recheckingAll, setRecheckingAll] = useState(false)
@@ -214,6 +221,41 @@ export default function ContractDetail() {
         setContract(prev => prev ? { ...prev, items: prev.items.map(i => i.id === itemId ? data.item : i) } : null)
       }
     } finally { setSavingSellPriceId(null) }
+  }
+
+  async function applyFixedMoq() {
+    const ids = [...selectedIds]
+    if (!ids.length || !id) return
+    const moqStr = fixedMoq.trim()
+    if (!moqStr) { alert('Enter an MOQ value (e.g. 1 or 5)'); return }
+    setApplyingMoq(true)
+    try {
+      const res = await fetch(`/api/price-contracts/${id}/items/bulk-moq`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ itemIds: ids, moq: moqStr }),
+      })
+      if (res.ok) { fetchContract(); setFixedMoq('') }
+    } finally { setApplyingMoq(false) }
+  }
+
+  async function saveSingleMoq(itemId: string, value: string) {
+    if (!id) return
+    const moqStr = value.trim()
+    if (!moqStr) { setMoqEdit(null); return }
+    setSavingMoqId(itemId)
+    setMoqEdit(null)
+    try {
+      const res = await fetch(`/api/price-contracts/${id}/items/${itemId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ moq: moqStr }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (res.ok && data.item) {
+        setContract(prev => prev ? { ...prev, items: prev.items.map(i => i.id === itemId ? data.item : i) } : null)
+      }
+    } finally { setSavingMoqId(null) }
   }
 
   // ── Rename ──────────────────────────────────────────────────────────────────
@@ -405,7 +447,30 @@ export default function ContractDetail() {
                   <th className="px-4 py-3 text-right font-medium text-gray-600">List Price</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-600">% Off List</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-600">Disc %</th>
-                  <th className="px-4 py-3 text-right font-medium text-gray-600">Min Qty / MOQ</th>
+                  <th className="px-4 py-3 text-right font-medium text-gray-600 min-w-[180px]">
+                    <div className="flex flex-col items-end gap-1">
+                      <span>Min Qty / MOQ</span>
+                      <div className="flex flex-wrap items-center justify-end gap-x-1.5 gap-y-1">
+                        <span className="text-xs text-gray-500">Set selected to</span>
+                        <input
+                          type="text"
+                          value={fixedMoq}
+                          onChange={e => setFixedMoq(e.target.value)}
+                          placeholder="1"
+                          className="w-12 rounded border border-gray-300 px-1.5 py-0.5 text-right text-xs"
+                          onKeyDown={e => e.key === 'Enter' && applyFixedMoq()}
+                        />
+                        <button
+                          type="button"
+                          onClick={applyFixedMoq}
+                          disabled={applyingMoq || selectedIds.size === 0}
+                          className="rounded bg-blue-600 px-2 py-0.5 text-xs text-white hover:bg-blue-700 disabled:opacity-40"
+                        >
+                          {applyingMoq ? '…' : 'Apply'}
+                        </button>
+                      </div>
+                    </div>
+                  </th>
                   {/* Suggested Sell Price header: select + margin % or fixed $ for selected */}
                   <th className="px-4 py-3 text-right font-medium text-gray-600 min-w-[280px]">
                     <div className="flex flex-col items-end gap-2">
@@ -545,9 +610,34 @@ export default function ContractDetail() {
                         })()}
                       </td>
 
-                      {/* Min Qty / MOQ */}
-                      <td className="px-4 py-2 text-right text-gray-500">
-                        {item.moq || String(item.minQuantity ?? 1)}
+                      {/* Min Qty / MOQ: per-row edit */}
+                      <td className="px-4 py-2 text-right">
+                        {moqEdit?.itemId === item.id ? (
+                          <input
+                            type="text"
+                            autoFocus
+                            value={moqEdit.value}
+                            onChange={e => setMoqEdit(prev => prev ? { ...prev, value: e.target.value } : null)}
+                            onBlur={() => saveSingleMoq(item.id, moqEdit.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') saveSingleMoq(item.id, moqEdit.value)
+                              if (e.key === 'Escape') setMoqEdit(null)
+                            }}
+                            className="w-14 rounded border border-wago-green px-1.5 py-0.5 text-right text-xs font-medium"
+                            placeholder="1"
+                          />
+                        ) : savingMoqId === item.id ? (
+                          <span className="text-xs text-gray-400">…</span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setMoqEdit({ itemId: item.id, value: item.moq || String(item.minQuantity ?? 1) })}
+                            className="rounded px-1.5 py-0.5 text-right text-xs font-medium text-gray-700 hover:bg-gray-100"
+                            title="Click to edit MOQ"
+                          >
+                            {item.moq || String(item.minQuantity ?? 1)}
+                          </button>
+                        )}
                       </td>
 
                       {/* Suggested Sell Price: checkbox + individual edit or display */}

@@ -12,6 +12,7 @@ import {
   updateContractItem,
   recheckAllItems,
   bulkApplySellPrice,
+  bulkApplyMoq,
   deleteContractItem,
   downloadContractCSV,
 } from '../controllers/priceContract.controller'
@@ -31,6 +32,7 @@ router.delete('/:id', deleteContract)
 router.post('/:id/items/upload-pdfs', uploadMultiplePDFs, uploadPDFsToContract)
 router.post('/:id/recheck-all', recheckAllItems)
 router.post('/:id/items/bulk-sell-price', bulkApplySellPrice)
+router.post('/:id/items/bulk-moq', bulkApplyMoq)
 router.patch('/:id/items/:itemId', updateContractItem)
 router.delete('/:id/items/:itemId', deleteContractItem)
 router.get('/:id/download-csv', downloadContractCSV)

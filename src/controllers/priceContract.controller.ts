@@ -48,14 +48,16 @@ async function importRowsToContract(
     const moqStr = row.moq || ''
     const minQty = parseMOQ(moqStr)
 
-    // Look up matching part in master catalog
+    // Look up matching part in master catalog (use part.minQty for initial MOQ when matched)
     let partId: string | null = null
+    let masterMinQty: number | null = null
     if (row.partNumber && !isSeriesDiscount) {
       const part = await prisma.part.findFirst({
         where: { partNumber: row.partNumber, catalog: { isMaster: true } },
-        select: { id: true },
+        select: { id: true, minQty: true },
       })
       partId = part?.id ?? null
+      masterMinQty = part?.minQty ?? null
     }
 
     // For series discount rows, match category by series name
@@ -68,6 +70,8 @@ async function importRowsToContract(
       categoryId = cat?.id ?? null
     }
 
+    const finalMinQty = masterMinQty !== null ? masterMinQty : minQty
+    const finalMoq = masterMinQty !== null ? String(masterMinQty) : (moqStr || null)
     try {
       await prisma.priceContractItem.create({
         data: {
@@ -80,8 +84,8 @@ async function importRowsToContract(
           costPrice: isSeriesDiscount ? 0 : (costPrice ?? 0),
           netPrice: netPriceVal,
           discountPercent,
-          minQuantity: minQty,
-          moq: moqStr || null,
+          minQuantity: finalMinQty,
+          moq: finalMoq,
         },
       })
       imported++
@@ -140,7 +144,7 @@ export async function getContract(req: Request, res: Response) {
       items: {
         orderBy: { createdAt: 'asc' },
         include: {
-          part: { select: { id: true, partNumber: true, series: true, description: true, basePrice: true } },
+          part: { select: { id: true, partNumber: true, series: true, description: true, basePrice: true, minQty: true } },
         },
       },
     },
@@ -292,10 +296,20 @@ export async function updateContractItem(req: Request, res: Response) {
   const existing = await prisma.priceContractItem.findFirst({ where: { id: itemId, contractId } })
   if (!existing) return res.status(404).json({ message: 'Item not found.' })
 
-  const { partNumber: bodyPN, costPrice: bodyCP, suggestedSellPrice: bodySP } = req.body ?? {}
+  const { partNumber: bodyPN, costPrice: bodyCP, suggestedSellPrice: bodySP, moq: bodyMoq, minQuantity: bodyMinQty } = req.body ?? {}
   const partNumber = typeof bodyPN === 'string' && bodyPN.trim() ? bodyPN.trim() : existing.partNumber
   const costPrice = typeof bodyCP === 'number' && bodyCP >= 0 ? bodyCP : existing.costPrice
   const suggestedSellPrice = typeof bodySP === 'number' && bodySP >= 0 ? bodySP : existing.suggestedSellPrice
+  let moq = existing.moq
+  let minQuantity = existing.minQuantity
+  if (typeof bodyMinQty === 'number' && bodyMinQty >= 1) {
+    minQuantity = bodyMinQty
+    moq = String(bodyMinQty)
+  } else if (typeof bodyMoq === 'string') {
+    const s = bodyMoq.trim()
+    moq = s || null
+    minQuantity = s ? parseMOQ(s) : existing.minQuantity
+  }
 
   let partId: string | null = null
   if (partNumber) {
@@ -308,9 +322,9 @@ export async function updateContractItem(req: Request, res: Response) {
 
   const updated = await prisma.priceContractItem.update({
     where: { id: itemId },
-    data: { partNumber: partNumber || null, costPrice, partId, suggestedSellPrice },
+    data: { partNumber: partNumber || null, costPrice, partId, suggestedSellPrice, moq, minQuantity },
     include: {
-      part: { select: { id: true, partNumber: true, series: true, description: true, basePrice: true } },
+      part: { select: { id: true, partNumber: true, series: true, description: true, basePrice: true, minQty: true } },
     },
   })
 
@@ -342,11 +356,16 @@ export async function recheckAllItems(req: Request, res: Response) {
     if (!item.partNumber) { unmatched++; continue }
     const part = await prisma.part.findFirst({
       where: { partNumber: item.partNumber, catalog: { isMaster: true } },
-      select: { id: true },
+      select: { id: true, minQty: true },
     })
+    const updateData: { partId: string | null; minQuantity?: number; moq?: string } = { partId: part?.id ?? null }
+    if (part) {
+      updateData.minQuantity = part.minQty
+      updateData.moq = String(part.minQty)
+    }
     await prisma.priceContractItem.update({
       where: { id: item.id },
-      data: { partId: part?.id ?? null },
+      data: updateData,
     })
     if (part) matched++; else unmatched++
   }
@@ -387,6 +406,41 @@ export async function bulkApplySellPrice(req: Request, res: Response) {
       ? fixedPrice
       : item.costPrice / (1 - margin! / 100)
     await prisma.priceContractItem.update({ where: { id: itemId }, data: { suggestedSellPrice } })
+    updated++
+  }
+
+  return res.status(200).json({ updated })
+}
+
+// ── Bulk set MOQ on selected items ─────────────────────────────────────────
+
+/**
+ * POST /api/price-contracts/:id/items/bulk-moq
+ * Body: { itemIds: string[], moq: string }
+ * Sets moq and minQuantity (parsed from moq) for all selected items.
+ */
+export async function bulkApplyMoq(req: Request, res: Response) {
+  const { id: contractId } = req.params
+  const user = req.user!
+
+  const contract = await prisma.priceContract.findUnique({ where: { id: contractId } })
+  if (!contract) return res.status(404).json({ message: 'Contract not found.' })
+  if (!canAccess(user.id, user.role, contract.createdById)) return res.status(403).json({ message: 'Access denied.' })
+
+  const { itemIds, moq: bodyMoq } = req.body ?? {}
+  if (!Array.isArray(itemIds) || itemIds.length === 0) return res.status(400).json({ message: 'itemIds required.' })
+  const moqStr = typeof bodyMoq === 'string' ? bodyMoq.trim() : ''
+  if (!moqStr) return res.status(400).json({ message: 'moq (string) required.' })
+  const minQuantity = parseMOQ(moqStr)
+
+  let updated = 0
+  for (const itemId of itemIds as string[]) {
+    const item = await prisma.priceContractItem.findFirst({ where: { id: itemId, contractId } })
+    if (!item) continue
+    await prisma.priceContractItem.update({
+      where: { id: itemId },
+      data: { moq: moqStr, minQuantity },
+    })
     updated++
   }
 
