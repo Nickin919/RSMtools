@@ -443,13 +443,19 @@ export async function downloadContractCSV(req: Request, res: Response) {
     'Status',
   ]
 
-  const dataRows = contract.items
+  // Product rows (items with a part number)
+  const productRows = contract.items
     .filter(item => item.partNumber)
     .map(item => {
       const listPrice = item.part?.basePrice ?? null
+      // % Off List: calculated from catalog list price vs cost price
       const pctOffList = listPrice && listPrice > 0 && item.costPrice > 0
         ? ((1 - item.costPrice / listPrice) * 100)
         : null
+      // Disc %: use stored value; if missing but list price is known, derive it
+      const discPct = item.discountPercent != null
+        ? item.discountPercent
+        : pctOffList  // same calc — covers PDFs that show net prices with no explicit discount header
       const status = item.partId ? 'In Catalog' : 'Not Found'
 
       return [
@@ -459,7 +465,7 @@ export async function downloadContractCSV(req: Request, res: Response) {
         fmtMoney(item.costPrice),
         fmtMoney(listPrice),
         fmtPct(pctOffList),
-        fmtPct(item.discountPercent),
+        fmtPct(discPct),
         String(item.minQuantity ?? 1),
         item.moq ?? '',
         fmtMoney(item.suggestedSellPrice),
@@ -467,9 +473,24 @@ export async function downloadContractCSV(req: Request, res: Response) {
       ]
     })
 
+  // Series discount summary rows (items with no part number, only series + discount)
+  const discountRows = contract.items
+    .filter(item => !item.partNumber && item.seriesOrGroup && item.discountPercent != null)
+    .map(item => [
+      '',
+      item.seriesOrGroup ?? '',
+      item.description ?? '',
+      '', '', '', // no cost/list/pctOff
+      fmtPct(item.discountPercent),
+      '', '', '', // no minQty/moq/sellPrice
+      'Series Discount',
+    ])
+
+  const allDataRows = [...productRows, ...discountRows]
+
   const csv = [
     headers.map(csvEscape).join(','),
-    ...dataRows.map(row => row.map(csvEscape).join(',')),
+    ...allDataRows.map(row => row.map(csvEscape).join(',')),
   ].join('\r\n')
 
   const safeName = contract.name.replace(/[^a-z0-9_-]/gi, '_').slice(0, 60)

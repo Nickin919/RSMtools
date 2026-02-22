@@ -480,9 +480,12 @@ export default function ContractDetail() {
                         {pct != null ? <span className="font-medium text-green-700">{pct}%</span> : '—'}
                       </td>
 
-                      {/* Discount % */}
+                      {/* Discount % — use stored value; derive from list/cost when absent */}
                       <td className="px-4 py-2 text-right text-gray-500">
-                        {item.discountPercent != null ? `${item.discountPercent}%` : '—'}
+                        {(() => {
+                          const d = item.discountPercent != null ? item.discountPercent : pct
+                          return d != null ? `${d}%` : '—'
+                        })()}
                       </td>
 
                       {/* Min Qty */}
