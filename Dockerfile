@@ -10,8 +10,8 @@ RUN npm ci --ignore-scripts
 COPY . .
 RUN npm run build
 
-# Runtime: keep built backend and frontend
-FROM node:22-alpine
+# Runtime: Debian-based so native deps (bcrypt) have working prebuilds; Alpine often fails
+FROM node:22-slim
 
 WORKDIR /app
 
