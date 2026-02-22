@@ -7,6 +7,7 @@ import {
   getContract,
   deleteContract,
   uploadPDFsToContract,
+  batchUploadPDFs,
   downloadContractCSV,
   deleteContractItem,
 } from '../controllers/priceContract.controller'
@@ -17,6 +18,10 @@ router.use(authenticate)
 
 router.get('/', listContracts)
 router.post('/', createContract)
+
+// batch-upload must be before /:id to avoid collision
+router.post('/batch-upload', uploadMultiplePDFs, batchUploadPDFs)
+
 router.get('/:id', getContract)
 router.delete('/:id', deleteContract)
 

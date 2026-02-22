@@ -202,6 +202,94 @@ export async function downloadContractCSV(req: Request, res: Response) {
   return res.send(csv)
 }
 
+// ─── Batch upload: one PDF → one contract ────────────────────────────────────
+
+/**
+ * POST /api/price-contracts/batch-upload
+ * Accepts multiple PDFs (field: "pdf"). Each PDF becomes its own PriceContract
+ * named after the filename (e.g. "WAGO_Quote_2024.pdf" → "WAGO Quote 2024").
+ */
+export async function batchUploadPDFs(req: Request, res: Response) {
+  const user = req.user!
+
+  const files: Express.Multer.File[] = []
+  if (req.file) files.push(req.file)
+  if (Array.isArray(req.files)) files.push(...req.files)
+
+  if (files.length === 0) {
+    return res.status(400).json({ message: 'No PDF files provided.' })
+  }
+
+  function nameFromFile(originalname: string): string {
+    return originalname
+      .replace(/\.pdf$/i, '')
+      .replace(/[_\-]+/g, ' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim() || originalname
+  }
+
+  const results: {
+    filename: string
+    contractId: string
+    contractName: string
+    imported: number
+    skipped: number
+    error?: string
+  }[] = []
+
+  for (const file of files) {
+    const contractName = nameFromFile(file.originalname)
+    let parseResult
+    try {
+      parseResult = await parseWagoPDF(file.path)
+    } catch (err) {
+      console.error('PDF parse error:', err)
+      results.push({ filename: file.originalname, contractId: '', contractName, imported: 0, skipped: 0, error: 'PDF parse failed' })
+      try { fs.unlinkSync(file.path) } catch { /* ignore */ }
+      continue
+    }
+    try { fs.unlinkSync(file.path) } catch { /* ignore */ }
+
+    // Create one contract per PDF
+    const contract = await prisma.priceContract.create({
+      data: {
+        name: contractName,
+        createdById: user.id,
+      },
+    })
+
+    let imported = 0, skipped = 0
+    for (const row of parseResult.rows) {
+      if (!row.partNumber || row.costPrice <= 0) { skipped++; continue }
+
+      const part = await prisma.part.findFirst({
+        where: { partNumber: row.partNumber, catalog: { isMaster: true } },
+      })
+
+      await prisma.priceContractItem.create({
+        data: {
+          contractId: contract.id,
+          partId: part?.id ?? null,
+          partNumber: row.partNumber,
+          seriesOrGroup: row.seriesOrGroup || null,
+          costPrice: row.costPrice,
+          discountPercent: row.discountPercent || null,
+          suggestedSellPrice: row.suggestedSellPrice ?? null,
+          minQuantity: row.minQuantity || 1,
+        },
+      })
+      imported++
+    }
+
+    results.push({ filename: file.originalname, contractId: contract.id, contractName, imported, skipped })
+  }
+
+  return res.status(201).json({
+    message: `Created ${results.length} contract(s).`,
+    results,
+  })
+}
+
 // ─── Delete a single contract item ────────────────────────────────────────────
 
 export async function deleteContractItem(req: Request, res: Response) {
