@@ -366,7 +366,7 @@ export default function ContractDetail() {
                   <th className="px-4 py-3 text-right font-medium text-gray-600">List Price</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-600">% Off List</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-600">Disc %</th>
-                  <th className="px-4 py-3 text-right font-medium text-gray-600">Min Qty</th>
+                  <th className="px-4 py-3 text-right font-medium text-gray-600">Min Qty / MOQ</th>
                   {/* Suggested Sell Price header with master margin control */}
                   <th className="px-4 py-3 text-right font-medium text-gray-600 min-w-[220px]">
                     <div className="flex flex-col items-end gap-1.5">
@@ -488,9 +488,9 @@ export default function ContractDetail() {
                         })()}
                       </td>
 
-                      {/* Min Qty */}
+                      {/* Min Qty / MOQ */}
                       <td className="px-4 py-2 text-right text-gray-500">
-                        {item.moq || item.minQuantity}
+                        {item.moq || String(item.minQuantity ?? 1)}
                       </td>
 
                       {/* Suggested Sell Price */}

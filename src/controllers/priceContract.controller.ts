@@ -437,9 +437,8 @@ export async function downloadContractCSV(req: Request, res: Response) {
     'List Price',
     '% Off List',
     'Disc %',
-    'Min Qty',
-    'MOQ',
-    'Suggested Sell Price',
+    'Min Qty / MOQ',
+    'Suggested Sell $',
     'Status',
   ]
 
@@ -455,8 +454,10 @@ export async function downloadContractCSV(req: Request, res: Response) {
       // Disc %: use stored value; if missing but list price is known, derive it
       const discPct = item.discountPercent != null
         ? item.discountPercent
-        : pctOffList  // same calc — covers PDFs that show net prices with no explicit discount header
+        : pctOffList
       const status = item.partId ? 'In Catalog' : 'Not Found'
+      // Merge Min Qty / MOQ: show MOQ range if available, otherwise just min qty
+      const minQtyMoq = item.moq ? item.moq : String(item.minQuantity ?? 1)
 
       return [
         item.partNumber ?? '',
@@ -466,8 +467,7 @@ export async function downloadContractCSV(req: Request, res: Response) {
         fmtMoney(listPrice),
         fmtPct(pctOffList),
         fmtPct(discPct),
-        String(item.minQuantity ?? 1),
-        item.moq ?? '',
+        minQtyMoq,
         fmtMoney(item.suggestedSellPrice),
         status,
       ]
@@ -482,7 +482,8 @@ export async function downloadContractCSV(req: Request, res: Response) {
       item.description ?? '',
       '', '', '', // no cost/list/pctOff
       fmtPct(item.discountPercent),
-      '', '', '', // no minQty/moq/sellPrice
+      '', // no min qty/moq
+      '', // no suggested sell
       'Series Discount',
     ])
 
