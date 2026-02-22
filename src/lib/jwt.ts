@@ -1,6 +1,5 @@
 import jwt from 'jsonwebtoken'
 
-const secret = process.env.JWT_SECRET
 const expiresIn = process.env.JWT_EXPIRES_IN ?? '7d'
 
 export interface JwtPayload {
@@ -9,17 +8,19 @@ export interface JwtPayload {
   role: string
 }
 
-export function generateToken(payload: JwtPayload): string {
+function getSecret(): string {
+  const secret = process.env.JWT_SECRET?.trim()
   if (!secret || secret.length < 32) {
     throw new Error('JWT_SECRET must be set and at least 32 characters')
   }
-  return jwt.sign(payload, secret, { expiresIn } as jwt.SignOptions)
+  return secret
+}
+
+export function generateToken(payload: JwtPayload): string {
+  return jwt.sign(payload, getSecret(), { expiresIn } as jwt.SignOptions)
 }
 
 export function verifyToken(token: string): JwtPayload {
-  if (!secret || secret.length < 32) {
-    throw new Error('JWT_SECRET must be set and at least 32 characters')
-  }
-  const decoded = jwt.verify(token, secret) as JwtPayload
+  const decoded = jwt.verify(token, getSecret()) as JwtPayload
   return decoded
 }

@@ -1,15 +1,26 @@
+import crypto from 'crypto'
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 import routes from './routes'
 
 function validateEnv() {
-  if (!process.env.DATABASE_URL?.trim()) {
+  const dbUrl = process.env.DATABASE_URL?.trim()
+  if (!dbUrl) {
+    console.error('[Startup] DATABASE_URL is missing. In Railway: add a Postgres database, then in your service Variables add DATABASE_URL (reference the Postgres service variable).')
     throw new Error('DATABASE_URL is required')
   }
-  const secret = process.env.JWT_SECRET
-  if (!secret || typeof secret !== 'string' || secret.length < 32) {
-    throw new Error('JWT_SECRET must be set and at least 32 characters')
+  let secret = process.env.JWT_SECRET?.trim()
+  if (!secret || secret.length < 32) {
+    secret = crypto.randomBytes(32).toString('hex')
+    process.env.JWT_SECRET = secret
+    console.warn('')
+    console.warn('*** WARNING: JWT_SECRET was not set or was shorter than 32 characters. ***')
+    console.warn('*** Using a temporary secret for this run. Set JWT_SECRET in Railway → Service → Variables (32+ chars) and redeploy. ***')
+    console.warn('*** Until then, login tokens will reset on every deploy. ***')
+    console.warn('')
+  } else {
+    process.env.JWT_SECRET = secret
   }
 }
 

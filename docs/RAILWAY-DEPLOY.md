@@ -18,7 +18,9 @@ git push -u origin main
 3. Select your **RSMTools** (or repo name) and connect.
 4. Railway will add the repo and create a service.
 
-## 3. Add PostgreSQL
+## 3. Add PostgreSQL and required variables
+
+**The app will not start until both `DATABASE_URL` and `JWT_SECRET` are set in your app service Variables.**
 
 1. In the project, click **+ New** → **Database** → **PostgreSQL**.
 2. After it’s created, open the PostgreSQL service → **Variables** (or **Connect**) and copy the connection URL (or use the **Variables** tab to see `DATABASE_URL`).
