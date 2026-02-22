@@ -358,8 +358,9 @@ export async function recheckAllItems(req: Request, res: Response) {
 
 /**
  * POST /api/price-contracts/:id/items/bulk-sell-price
- * Body: { itemIds: string[], marginPercent: number }
- * suggestedSellPrice = costPrice / (1 - marginPercent/100)
+ * Body: { itemIds: string[], marginPercent?: number, suggestedSellPrice?: number }
+ * - If suggestedSellPrice is a number >= 0: set all selected items to that fixed price.
+ * - Else if marginPercent: suggestedSellPrice = costPrice / (1 - marginPercent/100)
  */
 export async function bulkApplySellPrice(req: Request, res: Response) {
   const { id: contractId } = req.params
@@ -369,17 +370,22 @@ export async function bulkApplySellPrice(req: Request, res: Response) {
   if (!contract) return res.status(404).json({ message: 'Contract not found.' })
   if (!canAccess(user.id, user.role, contract.createdById)) return res.status(403).json({ message: 'Access denied.' })
 
-  const { itemIds, marginPercent } = req.body ?? {}
+  const { itemIds, marginPercent, suggestedSellPrice: bodySP } = req.body ?? {}
   if (!Array.isArray(itemIds) || itemIds.length === 0) return res.status(400).json({ message: 'itemIds required.' })
-  const margin = parseFloat(marginPercent)
-  if (isNaN(margin) || margin < 0 || margin >= 100) return res.status(400).json({ message: 'marginPercent must be 0–99.' })
 
-  const divisor = 1 - margin / 100
+  const fixedPrice = typeof bodySP === 'number' && bodySP >= 0 ? bodySP : null
+  const margin = fixedPrice === null ? parseFloat(marginPercent) : null
+  if (fixedPrice === null && (isNaN(margin!) || margin! < 0 || margin! >= 100)) {
+    return res.status(400).json({ message: 'Provide marginPercent (0–99) or suggestedSellPrice (≥ 0).' })
+  }
+
   let updated = 0
   for (const itemId of itemIds as string[]) {
     const item = await prisma.priceContractItem.findFirst({ where: { id: itemId, contractId } })
     if (!item) continue
-    const suggestedSellPrice = item.costPrice / divisor
+    const suggestedSellPrice = fixedPrice !== null
+      ? fixedPrice
+      : item.costPrice / (1 - margin! / 100)
     await prisma.priceContractItem.update({ where: { id: itemId }, data: { suggestedSellPrice } })
     updated++
   }

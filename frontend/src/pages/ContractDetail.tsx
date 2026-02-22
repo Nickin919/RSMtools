@@ -65,10 +65,14 @@ export default function ContractDetail() {
   const [recheckingId, setRecheckingId] = useState<string | null>(null)
   const [removingId, setRemovingId] = useState<string | null>(null)
 
-  // Suggested sell price margin master control
+  // Suggested sell price: margin + fixed column control + per-row edit
   const [marginPct, setMarginPct] = useState('30')
+  const [fixedSellPrice, setFixedSellPrice] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [applyingMargin, setApplyingMargin] = useState(false)
+  const [applyingFixed, setApplyingFixed] = useState(false)
+  const [sellPriceEdit, setSellPriceEdit] = useState<{ itemId: string; value: string } | null>(null)
+  const [savingSellPriceId, setSavingSellPriceId] = useState<string | null>(null)
 
   // Recheck all
   const [recheckingAll, setRecheckingAll] = useState(false)
@@ -175,6 +179,41 @@ export default function ContractDetail() {
       })
       if (res.ok) fetchContract()
     } finally { setApplyingMargin(false) }
+  }
+
+  async function applyFixedPrice() {
+    const ids = [...selectedIds]
+    if (!ids.length || !id) return
+    const price = parseFloat(fixedSellPrice.replace(/[$,]/g, '').trim())
+    if (isNaN(price) || price < 0) { alert('Enter a valid price (e.g. 20 or 20.00)'); return }
+    setApplyingFixed(true)
+    try {
+      const res = await fetch(`/api/price-contracts/${id}/items/bulk-sell-price`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ itemIds: ids, suggestedSellPrice: price }),
+      })
+      if (res.ok) { fetchContract(); setFixedSellPrice('') }
+    } finally { setApplyingFixed(false) }
+  }
+
+  async function saveSingleSellPrice(itemId: string, value: string) {
+    if (!id) return
+    const price = parseFloat(value.replace(/[$,]/g, '').trim())
+    if (isNaN(price) || price < 0) { setSellPriceEdit(null); return }
+    setSavingSellPriceId(itemId)
+    setSellPriceEdit(null)
+    try {
+      const res = await fetch(`/api/price-contracts/${id}/items/${itemId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ suggestedSellPrice: price }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (res.ok && data.item) {
+        setContract(prev => prev ? { ...prev, items: prev.items.map(i => i.id === itemId ? data.item : i) } : null)
+      }
+    } finally { setSavingSellPriceId(null) }
   }
 
   // ── Rename ──────────────────────────────────────────────────────────────────
@@ -367,11 +406,11 @@ export default function ContractDetail() {
                   <th className="px-4 py-3 text-right font-medium text-gray-600">% Off List</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-600">Disc %</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-600">Min Qty / MOQ</th>
-                  {/* Suggested Sell Price header with master margin control */}
-                  <th className="px-4 py-3 text-right font-medium text-gray-600 min-w-[220px]">
-                    <div className="flex flex-col items-end gap-1.5">
+                  {/* Suggested Sell Price header: select + margin % or fixed $ for selected */}
+                  <th className="px-4 py-3 text-right font-medium text-gray-600 min-w-[280px]">
+                    <div className="flex flex-col items-end gap-2">
                       <span>Suggested Sell</span>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
                         <input
                           type="checkbox"
                           checked={allSelected}
@@ -380,16 +419,15 @@ export default function ContractDetail() {
                           className="h-3.5 w-3.5 rounded text-wago-green"
                           title="Select all"
                         />
+                        <span className="text-xs text-gray-500">Margin %</span>
                         <input
                           type="number"
                           value={marginPct}
                           onChange={e => setMarginPct(e.target.value)}
                           min={0} max={99} step={0.5}
-                          className="w-16 rounded border border-gray-300 px-1.5 py-0.5 text-right text-xs"
-                          placeholder="Margin %"
+                          className="w-14 rounded border border-gray-300 px-1.5 py-0.5 text-right text-xs"
                           title="Margin %"
                         />
-                        <span className="text-xs text-gray-500">%</span>
                         <button
                           type="button"
                           onClick={applyMargin}
@@ -397,6 +435,25 @@ export default function ContractDetail() {
                           className="rounded bg-wago-green px-2 py-0.5 text-xs text-white hover:bg-green-700 disabled:opacity-40"
                         >
                           {applyingMargin ? '…' : 'Apply'}
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap items-center justify-end gap-x-1.5 gap-y-1">
+                        <span className="text-xs text-gray-500">Set selected to $</span>
+                        <input
+                          type="text"
+                          value={fixedSellPrice}
+                          onChange={e => setFixedSellPrice(e.target.value)}
+                          placeholder="20"
+                          className="w-16 rounded border border-gray-300 px-1.5 py-0.5 text-right text-xs"
+                          onKeyDown={e => e.key === 'Enter' && applyFixedPrice()}
+                        />
+                        <button
+                          type="button"
+                          onClick={applyFixedPrice}
+                          disabled={applyingFixed || selectedIds.size === 0}
+                          className="rounded bg-blue-600 px-2 py-0.5 text-xs text-white hover:bg-blue-700 disabled:opacity-40"
+                        >
+                          {applyingFixed ? '…' : 'Apply'}
                         </button>
                       </div>
                     </div>
@@ -493,7 +550,7 @@ export default function ContractDetail() {
                         {item.moq || String(item.minQuantity ?? 1)}
                       </td>
 
-                      {/* Suggested Sell Price */}
+                      {/* Suggested Sell Price: checkbox + individual edit or display */}
                       <td className="px-4 py-2 text-right">
                         <div className="flex items-center justify-end gap-2">
                           <input
@@ -501,10 +558,34 @@ export default function ContractDetail() {
                             checked={isSelected}
                             onChange={e => toggleOne(item.id, e.target.checked)}
                             className="h-3.5 w-3.5 rounded text-wago-green"
+                            title="Select for column Apply"
                           />
-                          <span className={`font-medium ${sellPrice ? 'text-green-700' : 'text-gray-300'}`}>
-                            {sellPrice ? fmt(sellPrice) : '—'}
-                          </span>
+                          {sellPriceEdit?.itemId === item.id ? (
+                            <input
+                              type="text"
+                              autoFocus
+                              value={sellPriceEdit.value}
+                              onChange={e => setSellPriceEdit(prev => prev ? { ...prev, value: e.target.value } : null)}
+                              onBlur={() => saveSingleSellPrice(item.id, sellPriceEdit.value)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') saveSingleSellPrice(item.id, sellPriceEdit.value)
+                                if (e.key === 'Escape') setSellPriceEdit(null)
+                              }}
+                              className="w-20 rounded border border-wago-green px-1.5 py-0.5 text-right text-xs font-medium"
+                              placeholder="0.00"
+                            />
+                          ) : savingSellPriceId === item.id ? (
+                            <span className="text-xs text-gray-400">…</span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setSellPriceEdit({ itemId: item.id, value: sellPrice != null ? String(sellPrice) : '' })}
+                              className={`min-w-[4rem] rounded px-1.5 py-0.5 text-right text-xs font-medium hover:bg-gray-100 ${sellPrice ? 'text-green-700' : 'text-gray-400'}`}
+                              title="Click to set price"
+                            >
+                              {sellPrice ? fmt(sellPrice) : '—'}
+                            </button>
+                          )}
                         </div>
                       </td>
 
