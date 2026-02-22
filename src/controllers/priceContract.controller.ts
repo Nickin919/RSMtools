@@ -1,7 +1,9 @@
 import { Request, Response } from 'express'
 import fs from 'fs'
+import archiver from 'archiver'
 import { prisma } from '../lib/prisma'
 import { parseWagoPDF, ParsedRow } from '../lib/pdfParser'
+import { parseQuoteNumber } from '../lib/quoteNumber'
 
 const ADMIN_RSM: string[] = ['ADMIN', 'RSM']
 
@@ -27,6 +29,27 @@ function parseDiscountStr(s: string): number | null {
 function parseMOQ(moq: string): number {
   const m = moq.match(/\d+/)
   return m ? Math.max(1, parseInt(m[0], 10)) : 1
+}
+
+/** Build Prisma quote fields from a raw quote number string (for grouping). */
+function quoteFieldsFromNumber(quoteNumber: string | null | undefined): {
+  quoteNumber?: string
+  quoteCore?: string | null
+  quoteYear?: number | null
+  quotePrefix?: string | null
+  quoteRevision?: string | null
+} {
+  const s = typeof quoteNumber === 'string' ? quoteNumber.trim() : ''
+  if (!s) return {}
+  const parsed = parseQuoteNumber(s)
+  if (!parsed) return { quoteNumber: s }
+  return {
+    quoteNumber: parsed.display,
+    quoteCore: parsed.core,
+    quoteYear: parsed.year,
+    quotePrefix: parsed.prefix,
+    quoteRevision: parsed.revision,
+  }
 }
 
 /** Import parsed rows into a contract, returns { imported, skipped } */
@@ -102,15 +125,43 @@ async function importRowsToContract(
 export async function listContracts(req: Request, res: Response) {
   const user = req.user!
   const isAdminOrRsm = ADMIN_RSM.includes(user.role)
+  const view = (req.query.view as string) === 'by-quote' ? 'by-quote' : 'by-name'
+
   const contracts = await prisma.priceContract.findMany({
     where: isAdminOrRsm ? undefined : { createdById: user.id },
-    orderBy: { createdAt: 'desc' },
+    orderBy: view === 'by-name' ? { createdAt: 'desc' } : [{ quoteCore: 'asc' }, { quoteYear: 'asc' }, { quoteRevision: 'asc' }, { createdAt: 'asc' }],
     include: {
       createdBy: { select: { id: true, firstName: true, lastName: true, email: true } },
       _count: { select: { items: true } },
     },
   })
-  return res.status(200).json({ contracts })
+
+  if (view === 'by-name') {
+    return res.status(200).json({ contracts })
+  }
+
+  // By-quote: group by quoteCore (+ quoteYear). Contracts without quoteCore go to "ungrouped".
+  const grouped = new Map<string, typeof contracts>()
+  const ungrouped: typeof contracts = []
+  for (const c of contracts) {
+    if (c.quoteCore) {
+      const key = c.quoteYear != null ? `${c.quoteCore}-${c.quoteYear}` : c.quoteCore
+      if (!grouped.has(key)) grouped.set(key, [])
+      grouped.get(key)!.push(c)
+    } else {
+      ungrouped.push(c)
+    }
+  }
+  const groups = Array.from(grouped.entries()).map(([key, list]) => {
+    const first = list[0]
+    return {
+      quoteCore: first!.quoteCore,
+      quoteYear: first!.quoteYear,
+      label: first!.quoteYear != null ? `${first!.quoteCore} (20${String(first!.quoteYear).padStart(2, '0')})` : first!.quoteCore,
+      contracts: list,
+    }
+  })
+  return res.status(200).json({ view: 'by-quote', groups, ungrouped })
 }
 
 // ── Create contract ────────────────────────────────────────────────────────
@@ -120,6 +171,7 @@ export async function createContract(req: Request, res: Response) {
   if (!name || typeof name !== 'string' || !name.trim()) {
     return res.status(400).json({ message: 'Contract name is required.' })
   }
+  const quoteFields = quoteFieldsFromNumber((req.body ?? {}).quoteNumber)
   const contract = await prisma.priceContract.create({
     data: {
       name: name.trim(),
@@ -127,6 +179,7 @@ export async function createContract(req: Request, res: Response) {
       validFrom: validFrom ? new Date(validFrom) : null,
       validTo: validTo ? new Date(validTo) : null,
       createdById: req.user!.id,
+      ...quoteFields,
     },
   })
   return res.status(201).json({ contract })
@@ -159,12 +212,30 @@ export async function getContract(req: Request, res: Response) {
 export async function renameContract(req: Request, res: Response) {
   const { id } = req.params
   const user = req.user!
-  const { name } = req.body ?? {}
-  if (!name || typeof name !== 'string' || !name.trim()) return res.status(400).json({ message: 'Name is required.' })
+  const { name, quoteNumber } = req.body ?? {}
   const contract = await prisma.priceContract.findUnique({ where: { id } })
   if (!contract) return res.status(404).json({ message: 'Contract not found.' })
   if (!canAccess(user.id, user.role, contract.createdById)) return res.status(403).json({ message: 'Access denied.' })
-  const updated = await prisma.priceContract.update({ where: { id }, data: { name: name.trim() } })
+
+  const data: { name?: string; quoteNumber?: string; quoteCore?: string | null; quoteYear?: number | null; quotePrefix?: string | null; quoteRevision?: string | null } = {}
+  if (name !== undefined) {
+    if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ message: 'Name is required.' })
+    data.name = name.trim()
+  }
+  if (quoteNumber !== undefined) {
+    const s = typeof quoteNumber === 'string' ? quoteNumber.trim() : ''
+    if (s === '') {
+      data.quoteNumber = null
+      data.quoteCore = null
+      data.quoteYear = null
+      data.quotePrefix = null
+      data.quoteRevision = null
+    } else {
+      Object.assign(data, quoteFieldsFromNumber(quoteNumber))
+    }
+  }
+  if (Object.keys(data).length === 0) return res.status(400).json({ message: 'Provide name and/or quoteNumber.' })
+  const updated = await prisma.priceContract.update({ where: { id }, data })
   return res.status(200).json({ contract: updated })
 }
 
@@ -261,13 +332,16 @@ export async function batchUploadPDFs(req: Request, res: Response) {
       continue
     }
 
+    const rawQuote = parseResult.metadata.quoteNumber ?? null
+    const quoteFields = quoteFieldsFromNumber(rawQuote)
     const contract = await prisma.priceContract.create({
       data: {
         name: contractName,
-        quoteNumber: parseResult.metadata.quoteNumber ?? null,
+        quoteNumber: rawQuote ?? (quoteFields.quoteNumber ?? null),
         validFrom: parseResult.metadata.quoteDate ? new Date(parseResult.metadata.quoteDate) : null,
         validTo: parseResult.metadata.expirationDate ? new Date(parseResult.metadata.expirationDate) : null,
         createdById: user.id,
+        ...quoteFields,
       },
     })
 
@@ -461,6 +535,67 @@ export async function deleteContractItem(req: Request, res: Response) {
   return res.status(200).json({ message: 'Item deleted.' })
 }
 
+// ── Build CSV for a contract (shared by single download and quote-family ZIP) ──
+
+type ContractWithItems = Awaited<ReturnType<typeof prisma.priceContract.findUnique>> & {
+  items: Array<{
+    partNumber: string | null
+    seriesOrGroup: string | null
+    description: string | null
+    costPrice: number
+    discountPercent: number | null
+    suggestedSellPrice: number | null
+    minQuantity: number
+    moq: string | null
+    partId: string | null
+    part: { basePrice: number | null } | null
+  }>
+}
+
+function buildContractCSV(contract: ContractWithItems): string {
+  const csvEscape = (v: unknown): string => {
+    const s = String(v ?? '')
+    return `"${s.replace(/"/g, '""')}"`
+  }
+  const fmtMoney = (n: number | null | undefined) =>
+    n != null && n > 0 ? `$${n.toFixed(2)}` : ''
+  const fmtPct = (n: number | null | undefined) =>
+    n != null ? `${n.toFixed(1)}%` : ''
+
+  const headers = [
+    'Part #', 'Series', 'Description', 'Cost Price', 'List Price',
+    '% Off List', 'Disc %', 'Min Qty / MOQ', 'Suggested Sell $', 'Status',
+  ]
+  const productRows = contract.items
+    .filter(item => item.partNumber)
+    .map(item => {
+      const listPrice = item.part?.basePrice ?? null
+      const pctOffList = listPrice && listPrice > 0 && item.costPrice > 0
+        ? ((1 - item.costPrice / listPrice) * 100) : null
+      const discPct = item.discountPercent != null ? item.discountPercent : pctOffList
+      const minQtyMoq = item.moq ? item.moq : String(item.minQuantity ?? 1)
+      return [
+        item.partNumber ?? '', item.seriesOrGroup ?? '', item.description ?? '',
+        fmtMoney(item.costPrice), fmtMoney(listPrice), fmtPct(pctOffList), fmtPct(discPct),
+        minQtyMoq, fmtMoney(item.suggestedSellPrice), item.partId ? 'In Catalog' : 'Not Found',
+      ]
+    })
+  const discountRows = contract.items
+    .filter(item => !item.partNumber && item.seriesOrGroup && item.discountPercent != null)
+    .map(item => [
+      '', item.seriesOrGroup ?? '', item.description ?? '', '', '', '', fmtPct(item.discountPercent), '', '', 'Series Discount',
+    ])
+  const allDataRows = [...productRows, ...discountRows]
+  return [
+    headers.map(csvEscape).join(','),
+    ...allDataRows.map(row => row.map(csvEscape).join(',')),
+  ].join('\r\n')
+}
+
+function safeFileName(name: string, max = 60): string {
+  return name.replace(/[^a-z0-9_.-]/gi, '_').slice(0, max)
+}
+
 // ── Download contract as CSV ──────────────────────────────────────────────
 
 export async function downloadContractCSV(req: Request, res: Response) {
@@ -478,85 +613,63 @@ export async function downloadContractCSV(req: Request, res: Response) {
   if (!contract) return res.status(404).json({ message: 'Contract not found.' })
   if (!canAccess(user.id, user.role, contract.createdById)) return res.status(403).json({ message: 'Access denied.' })
 
-  // Quote every field so empty/null columns and commas in text don't shift columns in Excel
-  const csvEscape = (v: unknown): string => {
-    const s = String(v ?? '')
-    return `"${s.replace(/"/g, '""')}"`
+  const csv = buildContractCSV(contract as ContractWithItems)
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+  res.setHeader('Content-Disposition', `attachment; filename="${safeFileName(contract.name)}.csv"`)
+  return res.send(csv)
+}
+
+// ── Download quote family as ZIP (all contracts with same quoteCore) ────────
+
+export async function downloadQuoteFamilyZip(req: Request, res: Response) {
+  const { id } = req.params
+  const user = req.user!
+  const contract = await prisma.priceContract.findUnique({
+    where: { id },
+    select: { id: true, quoteCore: true, quoteYear: true, createdById: true },
+  })
+  if (!contract) return res.status(404).json({ message: 'Contract not found.' })
+  if (!canAccess(user.id, user.role, contract.createdById)) return res.status(403).json({ message: 'Access denied.' })
+  if (!contract.quoteCore) {
+    return res.status(400).json({ message: 'This contract has no quote number; cannot download quote family.' })
   }
 
-  const fmtMoney = (n: number | null | undefined) =>
-    n != null && n > 0 ? `$${n.toFixed(2)}` : ''
+  const isAdminOrRsm = ADMIN_RSM.includes(user.role)
+  const family = await prisma.priceContract.findMany({
+    where: {
+      quoteCore: contract.quoteCore,
+      quoteYear: contract.quoteYear,
+      ...(isAdminOrRsm ? {} : { createdById: user.id }),
+    },
+    include: {
+      items: {
+        orderBy: { createdAt: 'asc' },
+        include: { part: { select: { basePrice: true } } },
+      },
+    },
+  })
 
-  const fmtPct = (n: number | null | undefined) =>
-    n != null ? `${n.toFixed(1)}%` : ''
+  const zipLabel = contract.quoteYear != null
+    ? `${contract.quoteCore}-${contract.quoteYear}`
+    : contract.quoteCore
+  const zipFilename = `quote-family-${zipLabel}.zip`
 
-  const headers = [
-    'Part #',
-    'Series',
-    'Description',
-    'Cost Price',
-    'List Price',
-    '% Off List',
-    'Disc %',
-    'Min Qty / MOQ',
-    'Suggested Sell $',
-    'Status',
-  ]
+  res.setHeader('Content-Type', 'application/zip')
+  res.setHeader('Content-Disposition', `attachment; filename="${zipFilename}"`)
 
-  // Product rows (items with a part number)
-  const productRows = contract.items
-    .filter(item => item.partNumber)
-    .map(item => {
-      const listPrice = item.part?.basePrice ?? null
-      // % Off List: calculated from catalog list price vs cost price
-      const pctOffList = listPrice && listPrice > 0 && item.costPrice > 0
-        ? ((1 - item.costPrice / listPrice) * 100)
-        : null
-      // Disc %: use stored value; if missing but list price is known, derive it
-      const discPct = item.discountPercent != null
-        ? item.discountPercent
-        : pctOffList
-      const status = item.partId ? 'In Catalog' : 'Not Found'
-      // Merge Min Qty / MOQ: show MOQ range if available, otherwise just min qty
-      const minQtyMoq = item.moq ? item.moq : String(item.minQuantity ?? 1)
+  const archive = archiver('zip', { zlib: { level: 9 } })
+  archive.on('error', (err) => {
+    console.error('Quote family zip error:', err)
+    if (!res.headersSent) res.status(500).end()
+  })
+  archive.pipe(res)
 
-      return [
-        item.partNumber ?? '',
-        item.seriesOrGroup ?? '',
-        item.description ?? '',
-        fmtMoney(item.costPrice),
-        fmtMoney(listPrice),
-        fmtPct(pctOffList),
-        fmtPct(discPct),
-        minQtyMoq,
-        fmtMoney(item.suggestedSellPrice),
-        status,
-      ]
-    })
+  for (const c of family) {
+    const csv = buildContractCSV(c as ContractWithItems)
+    const baseName = safeFileName(c.name)
+    const filename = `${baseName}.csv`
+    archive.append(Buffer.from(csv, 'utf-8'), { name: filename })
+  }
 
-  // Series discount summary rows (items with no part number, only series + discount)
-  const discountRows = contract.items
-    .filter(item => !item.partNumber && item.seriesOrGroup && item.discountPercent != null)
-    .map(item => [
-      '',
-      item.seriesOrGroup ?? '',
-      item.description ?? '',
-      '', '', '', // no cost/list/pctOff
-      fmtPct(item.discountPercent),
-      '', // no min qty/moq
-      '', // no suggested sell
-      'Series Discount',
-    ])
-
-  const allDataRows = [...productRows, ...discountRows]
-
-  const csv = [
-    headers.map(csvEscape).join(','),
-    ...allDataRows.map(row => row.map(csvEscape).join(',')),
-  ].join('\r\n')
-
-  const safeName = contract.name.replace(/[^a-z0-9_-]/gi, '_').slice(0, 60)
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8')
-  res.setHeader('Content-Disposition', `attachment; filename="${safeName}.csv"`)
-  return res.send(csv)
+  await archive.finalize()
 }

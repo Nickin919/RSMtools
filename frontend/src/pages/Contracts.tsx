@@ -9,10 +9,20 @@ interface Contract {
   name: string
   description: string | null
   quoteNumber: string | null
+  quoteCore?: string | null
+  quoteYear?: number | null
+  quoteRevision?: string | null
   validFrom: string | null
   validTo: string | null
   createdAt: string
   _count?: { items: number }
+}
+
+interface QuoteGroup {
+  quoteCore: string
+  quoteYear: number | null
+  label: string
+  contracts: Contract[]
 }
 
 interface BatchResult {
@@ -50,7 +60,10 @@ function IconDownload() {
 export default function Contracts() {
   const { user } = useAuth()
   const navigate = useNavigate()
+  const [listView, setListView] = useState<'by-name' | 'by-quote'>('by-name')
   const [contracts, setContracts] = useState<Contract[]>([])
+  const [quoteGroups, setQuoteGroups] = useState<QuoteGroup[]>([])
+  const [ungrouped, setUngrouped] = useState<Contract[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -63,16 +76,27 @@ export default function Contracts() {
 
   const token = localStorage.getItem(TOKEN_KEY)
 
-  const fetchContracts = useCallback(() => {
+  const fetchContracts = useCallback((view: 'by-name' | 'by-quote' = listView) => {
     setLoading(true)
-    fetch('/api/price-contracts', { headers: { Authorization: `Bearer ${token}` } })
+    const q = view === 'by-quote' ? '?view=by-quote' : ''
+    fetch(`/api/price-contracts${q}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : Promise.reject())
-      .then(data => setContracts(Array.isArray(data) ? data : data.contracts ?? []))
+      .then(data => {
+        if (data.view === 'by-quote') {
+          setQuoteGroups(data.groups ?? [])
+          setUngrouped(data.ungrouped ?? [])
+          setContracts([])
+        } else {
+          setContracts(Array.isArray(data) ? data : data.contracts ?? [])
+          setQuoteGroups([])
+          setUngrouped([])
+        }
+      })
       .catch(() => setError('Could not load contracts.'))
       .finally(() => setLoading(false))
-  }, [token])
+  }, [token, listView])
 
-  useEffect(() => { fetchContracts() }, [fetchContracts])
+  useEffect(() => { fetchContracts(listView) }, [listView, fetchContracts])
 
   async function uploadFiles(files: FileList | File[]) {
     const pdfs = Array.from(files).filter(f => f.name.toLowerCase().endsWith('.pdf'))
@@ -129,7 +153,10 @@ export default function Contracts() {
     fetchContracts()
   }
 
-  const totalItems = contracts.reduce((sum, c) => sum + (c._count?.items ?? 0), 0)
+  const totalItems = listView === 'by-name'
+    ? contracts.reduce((sum, c) => sum + (c._count?.items ?? 0), 0)
+    : [...quoteGroups.flatMap(g => g.contracts), ...ungrouped].reduce((sum, c) => sum + (c._count?.items ?? 0), 0)
+  const totalContracts = listView === 'by-name' ? contracts.length : quoteGroups.reduce((s, g) => s + g.contracts.length, 0) + ungrouped.length
 
   return (
     <div>
@@ -148,7 +175,7 @@ export default function Contracts() {
               <IconDocument />
             </div>
             <div>
-              <p className="text-2xl font-bold text-gray-900">{contracts.length}</p>
+              <p className="text-2xl font-bold text-gray-900">{loading ? '—' : totalContracts}</p>
               <p className="text-sm font-medium text-gray-600">Contracts</p>
             </div>
           </div>
@@ -284,11 +311,108 @@ export default function Contracts() {
 
       {/* Contract list */}
       <div className="mt-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">Your contracts</h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Your contracts</h2>
+          <div className="flex rounded-lg border border-gray-200 bg-gray-50 p-0.5">
+            <button
+              type="button"
+              onClick={() => setListView('by-name')}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                listView === 'by-name' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              By contract name
+            </button>
+            <button
+              type="button"
+              onClick={() => setListView('by-quote')}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                listView === 'by-quote' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              By Quote #
+            </button>
+          </div>
+        </div>
         {loading ? (
           <div className="text-gray-400">Loading…</div>
         ) : error ? (
           <div className="rounded-lg bg-red-50 p-4 text-red-700">{error}</div>
+        ) : listView === 'by-quote' ? (
+          (quoteGroups.length === 0 && ungrouped.length === 0) ? (
+            <div className="rounded-xl border border-dashed border-gray-200 p-8 text-center text-gray-400">
+              No contracts yet. Drop PDFs above to get started.
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {quoteGroups.map(group => (
+                <div key={group.label} className="rounded-xl border border-gray-200 bg-white shadow-sm">
+                  <div className="border-b border-gray-100 bg-gray-50 px-4 py-2.5">
+                    <span className="font-mono font-semibold text-gray-900">{group.label}</span>
+                    <span className="ml-2 text-xs text-gray-500">
+                      {group.contracts.length} contract{group.contracts.length !== 1 ? 's' : ''} (same quote family)
+                    </span>
+                  </div>
+                  <ul className="divide-y divide-gray-100">
+                    {group.contracts.map(c => (
+                      <li key={c.id} className="flex items-center justify-between px-4 py-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <p className="truncate font-medium text-gray-900">{c.name}</p>
+                            {c.quoteNumber && (
+                              <span className="shrink-0 rounded bg-blue-50 px-1.5 py-0.5 text-xs font-mono text-blue-700">{c.quoteNumber}</span>
+                            )}
+                          </div>
+                          <p className="mt-0.5 text-xs text-gray-400">
+                            {c.validFrom ? <>Contract: {new Date(c.validFrom).toLocaleDateString()}</> : <>Uploaded: {new Date(c.createdAt).toLocaleDateString()}</>}
+                            {c.validTo && <> · Exp: {new Date(c.validTo).toLocaleDateString()}</>}
+                            {c._count != null ? ` · ${c._count.items} items` : ''}
+                          </p>
+                        </div>
+                        <div className="ml-4 flex shrink-0 items-center gap-2">
+                          <button type="button" onClick={() => downloadCsv(c.id, c.name)} className="btn-secondary py-1 px-3 text-xs">CSV ↓</button>
+                          <Link to={`/contracts/${c.id}`} className="btn-secondary py-1 px-3 text-xs">View</Link>
+                          <button type="button" onClick={() => deleteContract(c.id, c.name)} className="py-1 px-2 text-xs text-red-400 hover:text-red-600">✕</button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+              {ungrouped.length > 0 && (
+                <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+                  <div className="border-b border-gray-100 bg-gray-50 px-4 py-2.5">
+                    <span className="font-semibold text-gray-700">No quote number</span>
+                    <span className="ml-2 text-xs text-gray-500">{ungrouped.length} contract{ungrouped.length !== 1 ? 's' : ''}</span>
+                  </div>
+                  <ul className="divide-y divide-gray-100">
+                    {ungrouped.map(c => (
+                      <li key={c.id} className="flex items-center justify-between px-4 py-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <p className="truncate font-medium text-gray-900">{c.name}</p>
+                            {c.quoteNumber && (
+                              <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-xs font-mono text-gray-600">{c.quoteNumber}</span>
+                            )}
+                          </div>
+                          <p className="mt-0.5 text-xs text-gray-400">
+                            {c.validFrom ? <>Contract: {new Date(c.validFrom).toLocaleDateString()}</> : <>Uploaded: {new Date(c.createdAt).toLocaleDateString()}</>}
+                            {c.validTo && <> · Exp: {new Date(c.validTo).toLocaleDateString()}</>}
+                            {c._count != null ? ` · ${c._count.items} items` : ''}
+                          </p>
+                        </div>
+                        <div className="ml-4 flex shrink-0 items-center gap-2">
+                          <button type="button" onClick={() => downloadCsv(c.id, c.name)} className="btn-secondary py-1 px-3 text-xs">CSV ↓</button>
+                          <Link to={`/contracts/${c.id}`} className="btn-secondary py-1 px-3 text-xs">View</Link>
+                          <button type="button" onClick={() => deleteContract(c.id, c.name)} className="py-1 px-2 text-xs text-red-400 hover:text-red-600">✕</button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )
         ) : contracts.length === 0 ? (
           <div className="rounded-xl border border-dashed border-gray-200 p-8 text-center text-gray-400">
             No contracts yet. Drop PDFs above to get started.

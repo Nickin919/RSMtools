@@ -6,6 +6,7 @@ const TOKEN_KEY = 'rsm-tools-token'
 export default function ContractCreate() {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  const [quoteNumber, setQuoteNumber] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const navigate = useNavigate()
@@ -22,7 +23,11 @@ export default function ContractCreate() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ name, description: description || undefined }),
+        body: JSON.stringify({
+          name,
+          description: description || undefined,
+          ...(quoteNumber.trim() && { quoteNumber: quoteNumber.trim() }),
+        }),
       })
       if (!res.ok) throw new Error('Failed to create contract')
       const data = await res.json()
@@ -54,6 +59,20 @@ export default function ContractCreate() {
             onChange={(e) => setName(e.target.value)}
             required
           />
+        </div>
+        <div>
+          <label htmlFor="quoteNumber" className="block text-sm font-medium text-gray-700">
+            Quote # (optional)
+          </label>
+          <input
+            id="quoteNumber"
+            type="text"
+            placeholder="e.g. T26Q5889 or T26Q5889-A"
+            className="input mt-1 font-mono"
+            value={quoteNumber}
+            onChange={(e) => setQuoteNumber(e.target.value)}
+          />
+          <p className="mt-0.5 text-xs text-gray-500">Used to group this contract with related quotes (same core number).</p>
         </div>
         <div>
           <label htmlFor="description" className="block text-sm font-medium text-gray-700">

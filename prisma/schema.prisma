@@ -117,20 +117,25 @@ model PriceHistory {
 }
 
 model PriceContract {
-  id          String    @id @default(uuid())
-  name        String
-  description String?   @db.Text
-  quoteNumber String?   @map("quote_number")
-  validFrom   DateTime? @map("valid_from")
-  validTo     DateTime? @map("valid_to")
-  createdById String    @map("created_by_id")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
+  id             String    @id @default(uuid())
+  name           String
+  description    String?   @db.Text
+  quoteNumber    String?   @map("quote_number")
+  quoteCore      String?   @map("quote_core")   // e.g. "Q5889" — groups revisions together
+  quoteYear      Int?      @map("quote_year")   // 2-digit year, e.g. 26
+  quotePrefix    String?   @map("quote_prefix") // "T" | "W"
+  quoteRevision  String?   @map("quote_revision") // "A" | "B" | null for base
+  validFrom      DateTime? @map("valid_from")
+  validTo        DateTime? @map("valid_to")
+  createdById    String    @map("created_by_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
 
   createdBy User               @relation(fields: [createdById], references: [id])
   items     PriceContractItem[]
 
   @@index([createdById])
+  @@index([quoteCore, quoteYear])
   @@map("price_contracts")
 }
 

@@ -15,6 +15,7 @@ import {
   bulkApplyMoq,
   deleteContractItem,
   downloadContractCSV,
+  downloadQuoteFamilyZip,
 } from '../controllers/priceContract.controller'
 
 const router = Router()
@@ -36,5 +37,6 @@ router.post('/:id/items/bulk-moq', bulkApplyMoq)
 router.patch('/:id/items/:itemId', updateContractItem)
 router.delete('/:id/items/:itemId', deleteContractItem)
 router.get('/:id/download-csv', downloadContractCSV)
+router.get('/:id/download-quote-family', downloadQuoteFamilyZip)
 
 export default router

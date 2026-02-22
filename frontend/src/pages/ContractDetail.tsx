@@ -32,6 +32,8 @@ interface Contract {
   name: string
   description: string | null
   quoteNumber: string | null
+  quoteCore?: string | null
+  quoteYear?: number | null
   validFrom: string | null
   validTo: string | null
   createdAt: string
@@ -88,6 +90,12 @@ export default function ContractDetail() {
   // Rename
   const [editingName, setEditingName] = useState(false)
   const [renameValue, setRenameValue] = useState('')
+
+  // Quote # edit
+  const [editingQuoteNumber, setEditingQuoteNumber] = useState(false)
+  const [quoteNumberValue, setQuoteNumberValue] = useState('')
+  const [savingQuoteNumber, setSavingQuoteNumber] = useState(false)
+  const [downloadingFamily, setDownloadingFamily] = useState(false)
 
   function fetchContract() {
     if (!id) return
@@ -269,6 +277,59 @@ export default function ContractDetail() {
     if (res.ok) { setContract(prev => prev ? { ...prev, name: renameValue.trim() } : null); setEditingName(false) }
   }
 
+  // ── Quote # edit ────────────────────────────────────────────────────────────
+  async function saveQuoteNumber() {
+    if (!id) return
+    setSavingQuoteNumber(true)
+    try {
+      const res = await fetch(`/api/price-contracts/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ quoteNumber: quoteNumberValue.trim() || null }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (res.ok && data.contract) {
+        const c = data.contract
+        setContract(prev => prev ? {
+          ...prev,
+          name: c.name ?? prev.name,
+          quoteNumber: c.quoteNumber ?? null,
+          quoteCore: c.quoteCore ?? null,
+          quoteYear: c.quoteYear ?? null,
+        } : null)
+        setEditingQuoteNumber(false)
+      }
+    } finally {
+      setSavingQuoteNumber(false)
+    }
+  }
+
+  // ── Download quote family ZIP ───────────────────────────────────────────────
+  async function downloadQuoteFamilyZip() {
+    if (!id || !contract?.quoteCore) return
+    setDownloadingFamily(true)
+    try {
+      const res = await fetch(`/api/price-contracts/${id}/download-quote-family`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        alert(data.message || 'Download failed')
+        return
+      }
+      const blob = await res.blob()
+      const label = contract.quoteYear != null ? `${contract.quoteCore}-${contract.quoteYear}` : contract.quoteCore
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `quote-family-${label}.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+    } finally {
+      setDownloadingFamily(false)
+    }
+  }
+
   // ── Recheck all items ───────────────────────────────────────────────────────
   async function recheckAll() {
     if (!id) return
@@ -338,12 +399,32 @@ export default function ContractDetail() {
           </div>
           {contract.description && <p className="mt-1 text-sm text-gray-500">{contract.description}</p>}
           <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
-            {contract.quoteNumber && (
-              <span className="flex items-center gap-1">
-                <span className="font-medium text-gray-400">Quote #</span>
-                <span className="font-mono font-semibold text-blue-700">{contract.quoteNumber}</span>
-              </span>
-            )}
+            <span className="flex items-center gap-1">
+              <span className="font-medium text-gray-400">Quote #</span>
+              {editingQuoteNumber ? (
+                <>
+                  <input
+                    autoFocus
+                    value={quoteNumberValue}
+                    onChange={e => setQuoteNumberValue(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && saveQuoteNumber()}
+                    placeholder="e.g. T26Q5889-A"
+                    className="input font-mono text-blue-700 max-w-[12rem] py-0.5 text-xs"
+                  />
+                  <button type="button" onClick={saveQuoteNumber} disabled={savingQuoteNumber} className="btn-primary py-0.5 px-2 text-xs">Save</button>
+                  <button type="button" onClick={() => { setEditingQuoteNumber(false); setQuoteNumberValue(contract?.quoteNumber ?? '') }} className="btn-secondary py-0.5 px-2 text-xs">Cancel</button>
+                </>
+              ) : (
+                <>
+                  {contract.quoteNumber ? (
+                    <span className="font-mono font-semibold text-blue-700">{contract.quoteNumber}</span>
+                  ) : (
+                    <span className="text-gray-400">—</span>
+                  )}
+                  <button type="button" onClick={() => { setQuoteNumberValue(contract?.quoteNumber ?? ''); setEditingQuoteNumber(true) }} className="text-gray-400 hover:text-gray-600">✏️ Edit</button>
+                </>
+              )}
+            </span>
             {contract.validFrom && (
               <span className="flex items-center gap-1">
                 <span className="font-medium text-gray-400">Date</span>
@@ -358,7 +439,7 @@ export default function ContractDetail() {
                 </span>
               </span>
             )}
-            {!contract.validFrom && !contract.validTo && !contract.quoteNumber && (
+            {!contract.validFrom && !contract.validTo && (
               <span className="text-gray-400">Uploaded {new Date(contract.createdAt).toLocaleDateString()}</span>
             )}
           </div>
@@ -372,6 +453,17 @@ export default function ContractDetail() {
             {recheckingAll ? '⟳ Checking…' : '⟳ Recheck All'}
           </button>
           <button type="button" onClick={downloadCsv} className="btn-primary py-1.5 px-4 text-sm">Download CSV</button>
+          {contract.quoteCore && (
+            <button
+              type="button"
+              onClick={downloadQuoteFamilyZip}
+              disabled={downloadingFamily}
+              className="btn-secondary py-1.5 px-4 text-sm"
+              title="Download all contracts in this quote family (same Quote #) as a ZIP of CSVs"
+            >
+              {downloadingFamily ? 'Downloading…' : 'Download quote family (ZIP)'}
+            </button>
+          )}
           <button type="button" onClick={deleteContract} className="btn-secondary py-1.5 px-4 text-sm text-red-500">Delete</button>
         </div>
       </div>
