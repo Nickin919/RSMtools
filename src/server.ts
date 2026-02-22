@@ -1,6 +1,18 @@
 import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
+
+// Log uncaught errors so Railway (and local) logs show the real cause
+process.on('uncaughtException', (err) => {
+  console.error('[CRASH] uncaughtException:', err?.message ?? err)
+  console.error('[CRASH] stack:', err?.stack ?? 'no stack')
+  process.exitCode = 1
+})
+process.on('unhandledRejection', (reason) => {
+  console.error('[CRASH] unhandledRejection:', reason)
+  process.exitCode = 1
+})
+
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'

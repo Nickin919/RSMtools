@@ -10,19 +10,19 @@ RUN npm ci --ignore-scripts
 COPY . .
 RUN npm run build
 
-# Runtime: Debian-based so native deps (bcrypt) have working prebuilds; Alpine often fails
+# Runtime: Debian-based so native deps (bcrypt) have working prebuilds
 FROM node:22-slim
 
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts
+# Prisma schema must be present before npm ci so postinstall (prisma generate) can run
+COPY --from=builder /app/prisma ./prisma
+# Run with scripts so bcrypt installs its native binding (bcrypt_lib.node)
+RUN npm ci --omit=dev
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/frontend/dist ./frontend/dist
-COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma/client ./node_modules/@prisma/client
 
 ENV NODE_ENV=production
 EXPOSE 3000
