@@ -98,6 +98,22 @@ export async function login(req: Request, res: Response) {
   }
 }
 
+export async function loginAsGuest(_req: Request, res: Response) {
+  try {
+    const user = await prisma.user.create({
+      data: {
+        role: 'FREE',
+      },
+      select: { id: true, email: true, firstName: true, lastName: true, role: true },
+    })
+    const token = generateToken({ userId: user.id, email: user.email, role: user.role })
+    return res.status(201).json({ user: sanitizeUser(user), token })
+  } catch (err) {
+    console.error('Guest login error:', err)
+    return res.status(500).json({ message: 'Guest login failed' })
+  }
+}
+
 export async function getCurrentUser(req: Request, res: Response) {
   if (!req.user) {
     return res.status(401).json({ message: 'Authentication required' })

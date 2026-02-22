@@ -39,6 +39,7 @@ const AuthContext = createContext<{
   loading: boolean
   login: (email: string, password: string) => Promise<void>
   register: (data: { email?: string; password?: string; firstName?: string; lastName?: string }) => Promise<void>
+  loginAsGuest: () => Promise<void>
   logout: () => void
 } | null>(null)
 
@@ -96,6 +97,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(out.user ?? out)
   }
 
+  const loginAsGuest = async () => {
+    const res = await fetch('/api/auth/guest', { method: 'POST' })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.message || 'Guest login failed')
+    }
+    const data = await res.json()
+    setToken(data.token)
+    setUser(data.user ?? data)
+  }
+
   const logout = () => {
     clearToken()
     setUser(null)
@@ -109,6 +121,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         loading,
         login,
         register,
+        loginAsGuest,
         logout,
       }}
     >

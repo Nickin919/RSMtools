@@ -7,7 +7,8 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const { login } = useAuth()
+  const [guestLoading, setGuestLoading] = useState(false)
+  const { login, loginAsGuest } = useAuth()
   const navigate = useNavigate()
 
   async function handleSubmit(e: React.FormEvent) {
@@ -21,6 +22,19 @@ export default function Login() {
       setError(err instanceof Error ? err.message : 'Login failed')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function handleGuest() {
+    setError('')
+    setGuestLoading(true)
+    try {
+      await loginAsGuest()
+      navigate('/', { replace: true })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Guest login failed')
+    } finally {
+      setGuestLoading(false)
     }
   }
 
@@ -66,12 +80,25 @@ export default function Login() {
                 required
               />
             </div>
-            <button type="submit" className="btn-primary w-full" disabled={loading}>
+            <button type="submit" className="btn-primary w-full" disabled={loading || guestLoading}>
               {loading ? 'Signing in…' : 'Sign in'}
             </button>
           </form>
+          <div className="mt-4 flex items-center gap-3">
+            <div className="h-px flex-1 bg-gray-200" />
+            <span className="text-xs text-gray-400">or</span>
+            <div className="h-px flex-1 bg-gray-200" />
+          </div>
+          <button
+            type="button"
+            onClick={handleGuest}
+            disabled={loading || guestLoading}
+            className="btn-secondary mt-4 w-full"
+          >
+            {guestLoading ? 'Continuing…' : 'Continue without login'}
+          </button>
           <p className="mt-4 text-center text-sm text-gray-600">
-            Don’t have an account?{' '}
+            Don&apos;t have an account?{' '}
             <Link to="/register" className="font-medium text-wago-green hover:text-wago-darkgreen">
               Register
             </Link>
