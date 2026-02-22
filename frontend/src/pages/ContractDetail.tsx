@@ -22,7 +22,7 @@ export default function ContractDetail() {
     const token = localStorage.getItem(TOKEN_KEY)
     fetch(`/api/price-contracts/${id}`, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then(setContract)
+      .then((data) => setContract(data.contract ?? data))
       .catch(() => setContract(null))
       .finally(() => setLoading(false))
   }, [id])
@@ -43,7 +43,7 @@ export default function ContractDetail() {
       })
       const data = await res.json().catch(() => ({}))
       if (res.ok) {
-        setUploadMessage(`Uploaded. ${data.imported ?? data.count ?? ''} items added.`)
+        setUploadMessage(`Uploaded. ${data.totalImported ?? data.imported ?? data.count ?? ''} items added.`)
         window.location.reload()
       } else setUploadMessage(data.message || 'Upload failed')
     } catch {

@@ -17,6 +17,21 @@ import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 import routes from './routes'
+import { prisma } from './lib/prisma'
+
+async function ensureMasterCatalog() {
+  try {
+    const existing = await prisma.catalog.findFirst({ where: { isMaster: true } })
+    if (!existing) {
+      await prisma.catalog.create({
+        data: { name: 'Master Catalog', description: 'Master product catalog', isMaster: true },
+      })
+      console.log('[Startup] Created Master Catalog')
+    }
+  } catch (err) {
+    console.warn('[Startup] Could not ensure Master Catalog (DB may not be ready yet):', (err as Error).message)
+  }
+}
 
 function validateEnv() {
   const isProduction = process.env.NODE_ENV === 'production'
@@ -80,4 +95,5 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 const port = Number(process.env.PORT) || 3000
 app.listen(port, () => {
   console.log(`Server listening on port ${port}`)
+  void ensureMasterCatalog()
 })
