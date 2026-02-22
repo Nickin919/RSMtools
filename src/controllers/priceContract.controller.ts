@@ -257,14 +257,10 @@ export async function batchUploadPDFs(req: Request, res: Response) {
       continue
     }
 
-    // Create contract (use quote metadata for name if available)
-    const finalName = parseResult.metadata.quoteNumber
-      ? `${contractName} (${parseResult.metadata.quoteNumber})`
-      : contractName
-
     const contract = await prisma.priceContract.create({
       data: {
-        name: finalName,
+        name: contractName,
+        quoteNumber: parseResult.metadata.quoteNumber ?? null,
         validFrom: parseResult.metadata.quoteDate ? new Date(parseResult.metadata.quoteDate) : null,
         validTo: parseResult.metadata.expirationDate ? new Date(parseResult.metadata.expirationDate) : null,
         createdById: user.id,
@@ -274,7 +270,7 @@ export async function batchUploadPDFs(req: Request, res: Response) {
     const { imported, skipped } = await importRowsToContract(contract.id, parseResult.rows)
 
     results.push({
-      filename: file.originalname, contractId: contract.id, contractName: finalName,
+      filename: file.originalname, contractId: contract.id, contractName: contract.name,
       imported, skipped, warnings: parseResult.warnings.length, errors: parseResult.errors,
       metadata: parseResult.metadata as Record<string, string | undefined>,
     })

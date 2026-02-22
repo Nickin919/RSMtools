@@ -30,6 +30,9 @@ interface Contract {
   id: string
   name: string
   description: string | null
+  quoteNumber: string | null
+  validFrom: string | null
+  validTo: string | null
   createdAt: string
   items: Item[]
 }
@@ -253,7 +256,31 @@ export default function ContractDetail() {
             )}
           </div>
           {contract.description && <p className="mt-1 text-sm text-gray-500">{contract.description}</p>}
-          <p className="mt-0.5 text-xs text-gray-400">{new Date(contract.createdAt).toLocaleDateString()}</p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
+            {contract.quoteNumber && (
+              <span className="flex items-center gap-1">
+                <span className="font-medium text-gray-400">Quote #</span>
+                <span className="font-mono font-semibold text-blue-700">{contract.quoteNumber}</span>
+              </span>
+            )}
+            {contract.validFrom && (
+              <span className="flex items-center gap-1">
+                <span className="font-medium text-gray-400">Date</span>
+                {new Date(contract.validFrom).toLocaleDateString()}
+              </span>
+            )}
+            {contract.validTo && (
+              <span className="flex items-center gap-1">
+                <span className="font-medium text-gray-400">Expires</span>
+                <span className={new Date(contract.validTo) < new Date() ? 'text-red-500 font-semibold' : ''}>
+                  {new Date(contract.validTo).toLocaleDateString()}
+                </span>
+              </span>
+            )}
+            {!contract.validFrom && !contract.validTo && !contract.quoteNumber && (
+              <span className="text-gray-400">Uploaded {new Date(contract.createdAt).toLocaleDateString()}</span>
+            )}
+          </div>
         </div>
         <div className="flex shrink-0 gap-2">
           <button

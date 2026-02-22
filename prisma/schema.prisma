@@ -120,6 +120,7 @@ model PriceContract {
   id          String    @id @default(uuid())
   name        String
   description String?   @db.Text
+  quoteNumber String?   @map("quote_number")
   validFrom   DateTime? @map("valid_from")
   validTo     DateTime? @map("valid_to")
   createdById String    @map("created_by_id")

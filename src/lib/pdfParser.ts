@@ -215,17 +215,51 @@ function isInternalPartNumber(partNumber: string): boolean {
 
 function extractMetadata(text: string): QuoteMetadata {
   const metadata: QuoteMetadata = {}
-  const headerText = text.substring(0, 2000)
-  let match = headerText.match(PATTERNS.quoteNumber)
-  if (match) metadata.quoteNumber = match[1].trim()
-  match = headerText.match(PATTERNS.quoteDate)
-  if (match) metadata.quoteDate = match[1].trim()
-  match = headerText.match(PATTERNS.expirationDate)
-  if (match) metadata.expirationDate = match[1].trim()
+  const headerText = text.substring(0, 2500)
+
+  // ── Quote Number ─────────────────────────────────────────────────────────
+  // Handles same-line:  "Quote Number: T26Q12428"
+  //         next-line:  "Quote Number:\nT26Q12428"
+  let match = headerText.match(/Quote\s+(?:Number|No\.?|#)\s*:[ \t]*\n?\s*([A-Z][A-Z0-9\-]+)/i)
+  if (match) {
+    metadata.quoteNumber = match[1].trim()
+  } else {
+    // Generic fallback: "Q #:" or "Quotation:" followed by alphanumeric
+    match = headerText.match(PATTERNS.quoteNumber)
+    if (match) metadata.quoteNumber = match[1].trim()
+  }
+
+  // ── Contract / Quote Date ─────────────────────────────────────────────────
+  // WAGO PDFs often have the date as the very first line (standalone, no label)
+  // e.g. the document starts with "9/1/2025\nSold To:\n..."
+  // Try standalone date on its own line first, before any address block
+  match = headerText.match(/^\s*(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})\s*$/m)
+  if (match) {
+    metadata.quoteDate = match[1].trim()
+  } else {
+    // Labeled: "Date: 9/1/2025" or "Date:\n9/1/2025"
+    match = headerText.match(/(?:^|\n)\s*(?:date|dated?)\s*:[ \t]*\n?\s*(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})/im)
+    if (match) metadata.quoteDate = match[1].trim()
+  }
+
+  // ── Expiration Date ───────────────────────────────────────────────────────
+  // Handles same-line:  "Quote Exp Date: 3/31/2026"
+  //         next-line:  "Quote Exp Date:\n3/31/2026"
+  match = headerText.match(/Quote\s+Exp(?:iration)?\s+Date\s*:[ \t]*\n?\s*(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})/i)
+  if (match) {
+    metadata.expirationDate = match[1].trim()
+  } else {
+    // Generic fallback: "Exp Date:", "Expires:", "Valid Until:", etc.
+    match = headerText.match(/(?:exp(?:ires?|iration)?|valid\s*(?:until|through|thru))\s*(?:date)?\s*:[ \t]*\n?\s*(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})/i)
+    if (match) metadata.expirationDate = match[1].trim()
+  }
+
+  // ── Customer ──────────────────────────────────────────────────────────────
   match = headerText.match(PATTERNS.customerName)
   if (match) metadata.customerName = match[1].trim()
   match = headerText.match(PATTERNS.customerNumber)
   if (match) metadata.customerNumber = match[1].trim()
+
   return metadata
 }
 

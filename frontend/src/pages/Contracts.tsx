@@ -7,6 +7,9 @@ interface Contract {
   id: string
   name: string
   description: string | null
+  quoteNumber: string | null
+  validFrom: string | null
+  validTo: string | null
   createdAt: string
   _count?: { items: number }
 }
@@ -198,9 +201,17 @@ export default function Contracts() {
             {contracts.map(c => (
               <div key={c.id} className="card flex items-center justify-between px-4 py-3">
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium text-gray-900">{c.name}</p>
-                  <p className="text-xs text-gray-400">
-                    {new Date(c.createdAt).toLocaleDateString()}
+                  <div className="flex items-center gap-2">
+                    <p className="truncate font-medium text-gray-900">{c.name}</p>
+                    {c.quoteNumber && (
+                      <span className="shrink-0 rounded bg-blue-50 px-1.5 py-0.5 text-xs font-mono text-blue-700">{c.quoteNumber}</span>
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-xs text-gray-400">
+                    {c.validFrom
+                      ? <>Contract: {new Date(c.validFrom).toLocaleDateString()}</>
+                      : <>Uploaded: {new Date(c.createdAt).toLocaleDateString()}</>}
+                    {c.validTo && <> · Exp: {new Date(c.validTo).toLocaleDateString()}</>}
                     {c._count != null ? ` · ${c._count.items} items` : ''}
                   </p>
                 </div>
