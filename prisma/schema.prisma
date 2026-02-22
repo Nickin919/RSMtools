@@ -140,10 +140,13 @@ model PriceContractItem {
   partNumber         String?   @map("part_number")
   categoryId         String?   @map("category_id")
   seriesOrGroup      String?   @map("series_or_group")
+  description        String?   @map("description") @db.Text
   costPrice          Float     @map("cost_price")
+  netPrice           Float?    @map("net_price")
   suggestedSellPrice Float?    @map("suggested_sell_price")
   discountPercent    Float?    @map("discount_percent")
   minQuantity        Int       @default(1) @map("min_quantity")
+  moq                String?   @map("moq")
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 

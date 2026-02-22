@@ -1,20 +1,103 @@
 import { Request, Response } from 'express'
 import fs from 'fs'
 import { prisma } from '../lib/prisma'
-import { parseWagoPDF, toCSV } from '../lib/pdfParser'
+import { parseWagoPDF, ParsedRow, toCSV } from '../lib/pdfParser'
 
 const ADMIN_RSM: string[] = ['ADMIN', 'RSM']
 
-function canAccessContract(userId: string, role: string, createdById: string): boolean {
+function canAccess(userId: string, role: string, createdById: string): boolean {
   return ADMIN_RSM.includes(role) || userId === createdById
 }
 
-// ─── List contracts ───────────────────────────────────────────────────────────
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+/** Parse a formatted price string like "$5.04" → 5.04, returns null if invalid */
+function parsePriceStr(s: string): number | null {
+  const v = parseFloat(s.replace(/[$,]/g, '').trim())
+  return isNaN(v) || v < 0 ? null : v
+}
+
+/** Parse "XX%" → XX, returns null if invalid */
+function parseDiscountStr(s: string): number | null {
+  const v = parseFloat(s.replace(/%/g, '').trim())
+  return isNaN(v) ? null : v
+}
+
+/** Parse MOQ string "1" or "1-99" → first integer */
+function parseMOQ(moq: string): number {
+  const m = moq.match(/\d+/)
+  return m ? Math.max(1, parseInt(m[0], 10)) : 1
+}
+
+/** Import parsed rows into a contract, returns { imported, skipped } */
+async function importRowsToContract(
+  contractId: string,
+  rows: ParsedRow[],
+): Promise<{ imported: number; skipped: number }> {
+  let imported = 0, skipped = 0
+
+  for (const row of rows) {
+    const isSeriesDiscount = !row.partNumber && !!row.series
+    const costPrice = parsePriceStr(row.price)
+
+    // Skip invalid product rows (series discount rows are stored too)
+    if (!isSeriesDiscount && (costPrice === null || costPrice <= 0)) { skipped++; continue }
+
+    const discountPercent = parseDiscountStr(row.discount)
+    const netPriceVal = parsePriceStr(row.netPrice)
+    const moqStr = row.moq || ''
+    const minQty = parseMOQ(moqStr)
+
+    // Look up matching part in master catalog
+    let partId: string | null = null
+    if (row.partNumber && !isSeriesDiscount) {
+      const part = await prisma.part.findFirst({
+        where: { partNumber: row.partNumber, catalog: { isMaster: true } },
+        select: { id: true },
+      })
+      partId = part?.id ?? null
+    }
+
+    // For series discount rows, match category by series name
+    let categoryId: string | null = null
+    if (isSeriesDiscount && row.series) {
+      const cat = await prisma.category.findFirst({
+        where: { OR: [{ name: row.series }, { name: { contains: row.series, mode: 'insensitive' } }] },
+        select: { id: true },
+      })
+      categoryId = cat?.id ?? null
+    }
+
+    try {
+      await prisma.priceContractItem.create({
+        data: {
+          contractId,
+          partId,
+          categoryId,
+          partNumber: !isSeriesDiscount && row.partNumber ? row.partNumber : null,
+          seriesOrGroup: row.series || null,
+          description: row.description || null,
+          costPrice: isSeriesDiscount ? 0 : (costPrice ?? 0),
+          netPrice: netPriceVal,
+          discountPercent,
+          minQuantity: minQty,
+          moq: moqStr || null,
+        },
+      })
+      imported++
+    } catch (err) {
+      console.error('Failed to create contract item:', err)
+      skipped++
+    }
+  }
+  return { imported, skipped }
+}
+
+// ── List contracts ─────────────────────────────────────────────────────────
 
 export async function listContracts(req: Request, res: Response) {
   const user = req.user!
   const isAdminOrRsm = ADMIN_RSM.includes(user.role)
-
   const contracts = await prisma.priceContract.findMany({
     where: isAdminOrRsm ? undefined : { createdById: user.id },
     orderBy: { createdAt: 'desc' },
@@ -23,18 +106,16 @@ export async function listContracts(req: Request, res: Response) {
       _count: { select: { items: true } },
     },
   })
-
   return res.status(200).json({ contracts })
 }
 
-// ─── Create contract ──────────────────────────────────────────────────────────
+// ── Create contract ────────────────────────────────────────────────────────
 
 export async function createContract(req: Request, res: Response) {
   const { name, description, validFrom, validTo } = req.body ?? {}
   if (!name || typeof name !== 'string' || !name.trim()) {
     return res.status(400).json({ message: 'Contract name is required.' })
   }
-
   const contract = await prisma.priceContract.create({
     data: {
       name: name.trim(),
@@ -44,16 +125,14 @@ export async function createContract(req: Request, res: Response) {
       createdById: req.user!.id,
     },
   })
-
   return res.status(201).json({ contract })
 }
 
-// ─── Get contract by id ───────────────────────────────────────────────────────
+// ── Get contract by id ─────────────────────────────────────────────────────
 
 export async function getContract(req: Request, res: Response) {
   const { id } = req.params
   const user = req.user!
-
   const contract = await prisma.priceContract.findUnique({
     where: { id },
     include: {
@@ -61,55 +140,39 @@ export async function getContract(req: Request, res: Response) {
       items: { orderBy: { createdAt: 'asc' } },
     },
   })
-
   if (!contract) return res.status(404).json({ message: 'Contract not found.' })
-  if (!canAccessContract(user.id, user.role, contract.createdById)) {
-    return res.status(403).json({ message: 'Access denied.' })
-  }
-
+  if (!canAccess(user.id, user.role, contract.createdById)) return res.status(403).json({ message: 'Access denied.' })
   return res.status(200).json({ contract })
 }
 
-// ─── Delete contract ──────────────────────────────────────────────────────────
+// ── Delete contract ────────────────────────────────────────────────────────
 
 export async function deleteContract(req: Request, res: Response) {
   const { id } = req.params
   const user = req.user!
-
   const contract = await prisma.priceContract.findUnique({ where: { id } })
   if (!contract) return res.status(404).json({ message: 'Contract not found.' })
-  if (!canAccessContract(user.id, user.role, contract.createdById)) {
-    return res.status(403).json({ message: 'Access denied.' })
-  }
-
+  if (!canAccess(user.id, user.role, contract.createdById)) return res.status(403).json({ message: 'Access denied.' })
   await prisma.priceContract.delete({ where: { id } })
   return res.status(200).json({ message: 'Contract deleted.' })
 }
 
-// ─── Upload PDFs to contract ──────────────────────────────────────────────────
+// ── Upload PDFs to existing contract ──────────────────────────────────────
 
 export async function uploadPDFsToContract(req: Request, res: Response) {
   const { id } = req.params
   const user = req.user!
-
   const contract = await prisma.priceContract.findUnique({ where: { id } })
   if (!contract) return res.status(404).json({ message: 'Contract not found.' })
-  if (!canAccessContract(user.id, user.role, contract.createdById)) {
-    return res.status(403).json({ message: 'Access denied.' })
-  }
+  if (!canAccess(user.id, user.role, contract.createdById)) return res.status(403).json({ message: 'Access denied.' })
 
   const files: Express.Multer.File[] = []
   if (req.file) files.push(req.file)
   if (Array.isArray(req.files)) files.push(...req.files)
+  if (files.length === 0) return res.status(400).json({ message: 'No PDF file(s) provided.' })
 
-  if (files.length === 0) {
-    return res.status(400).json({ message: 'No PDF file(s) provided. Send one or more PDFs as field "pdf".' })
-  }
-
-  let totalImported = 0
-  let totalSkipped = 0
-  const allUnparsed: string[] = []
-  const fileResults: { filename: string; imported: number; skipped: number }[] = []
+  let totalImported = 0, totalSkipped = 0
+  const fileResults: { filename: string; imported: number; skipped: number; warnings: number; errors: string[] }[] = []
 
   for (const file of files) {
     let parseResult
@@ -117,194 +180,168 @@ export async function uploadPDFsToContract(req: Request, res: Response) {
       parseResult = await parseWagoPDF(file.path)
     } catch (err) {
       console.error('PDF parse error:', err)
-      allUnparsed.push(`${file.originalname}: parse failed`)
+      fileResults.push({ filename: file.originalname, imported: 0, skipped: 0, warnings: 0, errors: ['Parse failed'] })
       try { fs.unlinkSync(file.path) } catch { /* ignore */ }
       continue
     }
-
     try { fs.unlinkSync(file.path) } catch { /* ignore */ }
 
-    let fileImported = 0
-    let fileSkipped = 0
-
-    for (const row of parseResult.rows) {
-      if (!row.partNumber || row.costPrice <= 0) { fileSkipped++; continue }
-
-      // Try to find matching part in master catalog
-      const part = await prisma.part.findFirst({
-        where: {
-          partNumber: row.partNumber,
-          catalog: { isMaster: true },
-        },
-      })
-
-      await prisma.priceContractItem.create({
-        data: {
-          contractId: id,
-          partId: part?.id ?? null,
-          partNumber: row.partNumber,
-          seriesOrGroup: row.seriesOrGroup || null,
-          costPrice: row.costPrice,
-          discountPercent: row.discountPercent || null,
-          suggestedSellPrice: row.suggestedSellPrice ?? null,
-          minQuantity: row.minQuantity || 1,
-        },
-      })
-      fileImported++
+    if (!parseResult.success) {
+      fileResults.push({ filename: file.originalname, imported: 0, skipped: 0, warnings: parseResult.warnings.length, errors: parseResult.errors })
+      continue
     }
 
-    totalImported += fileImported
-    totalSkipped += fileSkipped
-    allUnparsed.push(...parseResult.unparsedLines.slice(0, 5))
-    fileResults.push({ filename: file.originalname, imported: fileImported, skipped: fileSkipped })
+    const { imported, skipped } = await importRowsToContract(id, parseResult.rows)
+    totalImported += imported
+    totalSkipped += skipped
+    fileResults.push({ filename: file.originalname, imported, skipped, warnings: parseResult.warnings.length, errors: parseResult.errors })
   }
 
-  return res.status(200).json({
-    message: `Processed ${files.length} PDF(s). ${totalImported} items imported, ${totalSkipped} skipped.`,
-    files: fileResults,
-    totalImported,
-    totalSkipped,
-    sampleUnparsed: allUnparsed.slice(0, 10),
-  })
+  return res.status(200).json({ totalImported, totalSkipped, files: fileResults })
 }
 
-// ─── Download contract as CSV ─────────────────────────────────────────────────
+// ── Batch upload: one PDF → one contract ─────────────────────────────────
 
-export async function downloadContractCSV(req: Request, res: Response) {
-  const { id } = req.params
-  const user = req.user!
-
-  const contract = await prisma.priceContract.findUnique({
-    where: { id },
-    include: { items: { orderBy: { createdAt: 'asc' } } },
-  })
-
-  if (!contract) return res.status(404).json({ message: 'Contract not found.' })
-  if (!canAccessContract(user.id, user.role, contract.createdById)) {
-    return res.status(403).json({ message: 'Access denied.' })
-  }
-
-  const rows = contract.items.map((item) => ({
-    partNumber: item.partNumber ?? '',
-    seriesOrGroup: item.seriesOrGroup ?? '',
-    description: '',
-    costPrice: item.costPrice,
-    discountPercent: item.discountPercent ?? 0,
-    minQuantity: item.minQuantity,
-    suggestedSellPrice: item.suggestedSellPrice ?? undefined,
-  }))
-
-  const csv = toCSV(rows)
-  const safeName = contract.name.replace(/[^a-z0-9_-]/gi, '_').slice(0, 60)
-
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8')
-  res.setHeader('Content-Disposition', `attachment; filename="contract-${safeName}.csv"`)
-  return res.send(csv)
+function nameFromFile(originalname: string): string {
+  return originalname.replace(/\.pdf$/i, '').replace(/[_\-]+/g, ' ').replace(/\s{2,}/g, ' ').trim() || originalname
 }
 
-// ─── Batch upload: one PDF → one contract ────────────────────────────────────
-
-/**
- * POST /api/price-contracts/batch-upload
- * Accepts multiple PDFs (field: "pdf"). Each PDF becomes its own PriceContract
- * named after the filename (e.g. "WAGO_Quote_2024.pdf" → "WAGO Quote 2024").
- */
 export async function batchUploadPDFs(req: Request, res: Response) {
   const user = req.user!
-
   const files: Express.Multer.File[] = []
   if (req.file) files.push(req.file)
   if (Array.isArray(req.files)) files.push(...req.files)
-
-  if (files.length === 0) {
-    return res.status(400).json({ message: 'No PDF files provided.' })
-  }
-
-  function nameFromFile(originalname: string): string {
-    return originalname
-      .replace(/\.pdf$/i, '')
-      .replace(/[_\-]+/g, ' ')
-      .replace(/\s{2,}/g, ' ')
-      .trim() || originalname
-  }
+  if (files.length === 0) return res.status(400).json({ message: 'No PDF files provided.' })
 
   const results: {
-    filename: string
-    contractId: string
-    contractName: string
-    imported: number
-    skipped: number
-    error?: string
+    filename: string; contractId: string; contractName: string
+    imported: number; skipped: number; warnings: number; errors: string[]
+    metadata?: Record<string, string | undefined>
   }[] = []
 
   for (const file of files) {
     const contractName = nameFromFile(file.originalname)
+
     let parseResult
     try {
       parseResult = await parseWagoPDF(file.path)
     } catch (err) {
       console.error('PDF parse error:', err)
-      results.push({ filename: file.originalname, contractId: '', contractName, imported: 0, skipped: 0, error: 'PDF parse failed' })
+      results.push({ filename: file.originalname, contractId: '', contractName, imported: 0, skipped: 0, warnings: 0, errors: ['Parse failed'] })
       try { fs.unlinkSync(file.path) } catch { /* ignore */ }
       continue
     }
     try { fs.unlinkSync(file.path) } catch { /* ignore */ }
 
-    // Create one contract per PDF
+    if (!parseResult.success) {
+      results.push({ filename: file.originalname, contractId: '', contractName, imported: 0, skipped: 0, warnings: parseResult.warnings.length, errors: parseResult.errors })
+      continue
+    }
+
+    // Create contract (use quote metadata for name if available)
+    const finalName = parseResult.metadata.quoteNumber
+      ? `${contractName} (${parseResult.metadata.quoteNumber})`
+      : contractName
+
     const contract = await prisma.priceContract.create({
       data: {
-        name: contractName,
+        name: finalName,
+        validFrom: parseResult.metadata.quoteDate ? new Date(parseResult.metadata.quoteDate) : null,
+        validTo: parseResult.metadata.expirationDate ? new Date(parseResult.metadata.expirationDate) : null,
         createdById: user.id,
       },
     })
 
-    let imported = 0, skipped = 0
-    for (const row of parseResult.rows) {
-      if (!row.partNumber || row.costPrice <= 0) { skipped++; continue }
+    const { imported, skipped } = await importRowsToContract(contract.id, parseResult.rows)
 
-      const part = await prisma.part.findFirst({
-        where: { partNumber: row.partNumber, catalog: { isMaster: true } },
-      })
-
-      await prisma.priceContractItem.create({
-        data: {
-          contractId: contract.id,
-          partId: part?.id ?? null,
-          partNumber: row.partNumber,
-          seriesOrGroup: row.seriesOrGroup || null,
-          costPrice: row.costPrice,
-          discountPercent: row.discountPercent || null,
-          suggestedSellPrice: row.suggestedSellPrice ?? null,
-          minQuantity: row.minQuantity || 1,
-        },
-      })
-      imported++
-    }
-
-    results.push({ filename: file.originalname, contractId: contract.id, contractName, imported, skipped })
+    results.push({
+      filename: file.originalname, contractId: contract.id, contractName: finalName,
+      imported, skipped, warnings: parseResult.warnings.length, errors: parseResult.errors,
+      metadata: parseResult.metadata as Record<string, string | undefined>,
+    })
   }
 
-  return res.status(201).json({
-    message: `Created ${results.length} contract(s).`,
-    results,
-  })
+  return res.status(201).json({ message: `Created ${results.filter(r => r.contractId).length} contract(s).`, results })
 }
 
-// ─── Delete a single contract item ────────────────────────────────────────────
+// ── Update + recheck a single item against master catalog ─────────────────
+
+export async function updateContractItem(req: Request, res: Response) {
+  const { id: contractId, itemId } = req.params
+  const user = req.user!
+
+  const contract = await prisma.priceContract.findUnique({ where: { id: contractId } })
+  if (!contract) return res.status(404).json({ message: 'Contract not found.' })
+  if (!canAccess(user.id, user.role, contract.createdById)) return res.status(403).json({ message: 'Access denied.' })
+
+  const existing = await prisma.priceContractItem.findFirst({ where: { id: itemId, contractId } })
+  if (!existing) return res.status(404).json({ message: 'Item not found.' })
+
+  const { partNumber: bodyPN, costPrice: bodyCP } = req.body ?? {}
+  const partNumber = typeof bodyPN === 'string' && bodyPN.trim() ? bodyPN.trim() : existing.partNumber
+  const costPrice = typeof bodyCP === 'number' && bodyCP >= 0 ? bodyCP : existing.costPrice
+
+  // Re-check master catalog
+  let partId: string | null = null
+  if (partNumber) {
+    const part = await prisma.part.findFirst({
+      where: { partNumber, catalog: { isMaster: true } },
+      select: { id: true },
+    })
+    partId = part?.id ?? null
+  }
+
+  const updated = await prisma.priceContractItem.update({
+    where: { id: itemId },
+    data: { partNumber: partNumber || null, costPrice, partId },
+  })
+
+  return res.status(200).json({ item: updated, inCatalog: !!partId })
+}
+
+// ── Delete a single contract item ─────────────────────────────────────────
 
 export async function deleteContractItem(req: Request, res: Response) {
   const { id, itemId } = req.params
   const user = req.user!
-
   const contract = await prisma.priceContract.findUnique({ where: { id } })
   if (!contract) return res.status(404).json({ message: 'Contract not found.' })
-  if (!canAccessContract(user.id, user.role, contract.createdById)) {
-    return res.status(403).json({ message: 'Access denied.' })
-  }
-
+  if (!canAccess(user.id, user.role, contract.createdById)) return res.status(403).json({ message: 'Access denied.' })
   const item = await prisma.priceContractItem.findFirst({ where: { id: itemId, contractId: id } })
   if (!item) return res.status(404).json({ message: 'Item not found.' })
-
   await prisma.priceContractItem.delete({ where: { id: itemId } })
   return res.status(200).json({ message: 'Item deleted.' })
+}
+
+// ── Download contract as CSV ──────────────────────────────────────────────
+
+export async function downloadContractCSV(req: Request, res: Response) {
+  const { id } = req.params
+  const user = req.user!
+  const contract = await prisma.priceContract.findUnique({
+    where: { id },
+    include: { items: { orderBy: { createdAt: 'asc' } } },
+  })
+  if (!contract) return res.status(404).json({ message: 'Contract not found.' })
+  if (!canAccess(user.id, user.role, contract.createdById)) return res.status(403).json({ message: 'Access denied.' })
+
+  // Map DB items back to ParsedRow shape for toCSV
+  const rows: ParsedRow[] = contract.items
+    .filter(item => item.partNumber)
+    .map(item => ({
+      partNumber: item.partNumber ?? '',
+      series: item.seriesOrGroup ?? '',
+      description: item.description ?? '',
+      price: item.costPrice > 0 ? `$${item.costPrice.toFixed(2)}` : '',
+      discount: item.discountPercent != null ? `${item.discountPercent}%` : '',
+      moq: item.moq ?? String(item.minQuantity),
+      netPrice: item.netPrice != null ? `$${item.netPrice.toFixed(2)}` : '',
+      lineNumber: 0,
+    }))
+
+  const csv = toCSV(rows)
+  const safeName = contract.name.replace(/[^a-z0-9_-]/gi, '_').slice(0, 60)
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+  res.setHeader('Content-Disposition', `attachment; filename="${safeName}.csv"`)
+  return res.send(csv)
 }
