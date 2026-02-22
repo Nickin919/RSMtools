@@ -1,7 +1,7 @@
 import { Request, Response } from 'express'
 import fs from 'fs'
 import { prisma } from '../lib/prisma'
-import { parseWagoPDF, ParsedRow, toCSV } from '../lib/pdfParser'
+import { parseWagoPDF, ParsedRow } from '../lib/pdfParser'
 
 const ADMIN_RSM: string[] = ['ADMIN', 'RSM']
 
@@ -408,26 +408,70 @@ export async function downloadContractCSV(req: Request, res: Response) {
   const user = req.user!
   const contract = await prisma.priceContract.findUnique({
     where: { id },
-    include: { items: { orderBy: { createdAt: 'asc' } } },
+    include: {
+      items: {
+        orderBy: { createdAt: 'asc' },
+        include: { part: { select: { basePrice: true } } },
+      },
+    },
   })
   if (!contract) return res.status(404).json({ message: 'Contract not found.' })
   if (!canAccess(user.id, user.role, contract.createdById)) return res.status(403).json({ message: 'Access denied.' })
 
-  // Map DB items back to ParsedRow shape for toCSV
-  const rows: ParsedRow[] = contract.items
-    .filter(item => item.partNumber)
-    .map(item => ({
-      partNumber: item.partNumber ?? '',
-      series: item.seriesOrGroup ?? '',
-      description: item.description ?? '',
-      price: item.costPrice > 0 ? `$${item.costPrice.toFixed(2)}` : '',
-      discount: item.discountPercent != null ? `${item.discountPercent}%` : '',
-      moq: item.moq ?? String(item.minQuantity),
-      netPrice: item.netPrice != null ? `$${item.netPrice.toFixed(2)}` : '',
-      lineNumber: 0,
-    }))
+  const csvEscape = (v: unknown): string => {
+    const s = String(v ?? '')
+    return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s
+  }
 
-  const csv = toCSV(rows)
+  const fmtMoney = (n: number | null | undefined) =>
+    n != null && n > 0 ? `$${n.toFixed(2)}` : ''
+
+  const fmtPct = (n: number | null | undefined) =>
+    n != null ? `${n.toFixed(1)}%` : ''
+
+  const headers = [
+    'Part #',
+    'Series',
+    'Description',
+    'Cost Price',
+    'List Price',
+    '% Off List',
+    'Disc %',
+    'Min Qty',
+    'MOQ',
+    'Suggested Sell Price',
+    'Status',
+  ]
+
+  const dataRows = contract.items
+    .filter(item => item.partNumber)
+    .map(item => {
+      const listPrice = item.part?.basePrice ?? null
+      const pctOffList = listPrice && listPrice > 0 && item.costPrice > 0
+        ? ((1 - item.costPrice / listPrice) * 100)
+        : null
+      const status = item.partId ? 'In Catalog' : 'Not Found'
+
+      return [
+        item.partNumber ?? '',
+        item.seriesOrGroup ?? '',
+        item.description ?? '',
+        fmtMoney(item.costPrice),
+        fmtMoney(listPrice),
+        fmtPct(pctOffList),
+        fmtPct(item.discountPercent),
+        String(item.minQuantity ?? 1),
+        item.moq ?? '',
+        fmtMoney(item.suggestedSellPrice),
+        status,
+      ]
+    })
+
+  const csv = [
+    headers.map(csvEscape).join(','),
+    ...dataRows.map(row => row.map(csvEscape).join(',')),
+  ].join('\r\n')
+
   const safeName = contract.name.replace(/[^a-z0-9_-]/gi, '_').slice(0, 60)
   res.setHeader('Content-Type', 'text/csv; charset=utf-8')
   res.setHeader('Content-Disposition', `attachment; filename="${safeName}.csv"`)
