@@ -113,7 +113,6 @@ export default function CatalogUpload() {
   const [updateOnly, setUpdateOnly] = useState(false)
   const [dragActive, setDragActive] = useState(false)
   const [parsing, setParsing] = useState(false)
-  const [importing, setImporting] = useState(false)
   const [result, setResult] = useState<{ imported: number; updated: number; skipped: number; errors: number; errorDetails?: string[] } | null>(null)
   const [error, setError] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
@@ -167,7 +166,7 @@ export default function CatalogUpload() {
   }
 
   async function handleImport() {
-    setImporting(true); setStep('importing'); setError('')
+    setStep('importing'); setError('')
     const token = localStorage.getItem(TOKEN_KEY)
     try {
       const products = transformRows()
@@ -183,7 +182,7 @@ export default function CatalogUpload() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Import failed')
       setStep('preview')
-    } finally { setImporting(false) }
+    }
   }
 
   function reset() {
@@ -197,7 +196,6 @@ export default function CatalogUpload() {
     a.download = 'catalog-import-template.csv'; a.click()
   }
 
-  const steps: ['upload', 'mapping', 'preview', 'importing' | 'complete'] = ['upload', 'mapping', 'preview', 'importing']
   const stepIdx = ['upload', 'mapping', 'preview', 'importing', 'complete'].indexOf(step)
 
   return (
