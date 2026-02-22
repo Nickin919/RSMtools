@@ -3,6 +3,107 @@ import fs from 'fs'
 import { prisma } from '../lib/prisma'
 import { parseCSV, detectColumn } from '../lib/csvParser'
 
+// ── Types shared between JSON and CSV import ──────────────────────────────────
+
+interface MappedProduct {
+  partNumber?: string | null
+  series?: string | null
+  description?: string | null
+  englishDescription?: string | null
+  category?: string | null
+  price?: number | null        // basePrice
+  listPricePer100?: number | null
+  wagoIdent?: string | null
+  distributorDiscount?: number | null
+  minQty?: number | null
+}
+
+async function upsertProduct(
+  product: MappedProduct,
+  masterCatalogId: string,
+  updateOnly: boolean,
+): Promise<'created' | 'updated' | 'skipped' | 'error'> {
+  const partNumber = product.partNumber?.trim()
+  if (!partNumber) return 'skipped'
+
+  const categoryName = product.category?.trim() || 'General'
+
+  let category = await prisma.category.findFirst({
+    where: { catalogId: masterCatalogId, name: categoryName },
+  })
+  if (!category) {
+    if (updateOnly) return 'skipped'
+    category = await prisma.category.create({
+      data: { catalogId: masterCatalogId, name: categoryName },
+    })
+  }
+
+  const existing = await prisma.part.findUnique({
+    where: { catalogId_partNumber: { catalogId: masterCatalogId, partNumber } },
+  })
+
+  if (!existing && updateOnly) return 'skipped'
+
+  const data = {
+    series: product.series?.trim() || null,
+    description: product.description?.trim() || partNumber,
+    englishDescription: product.englishDescription?.trim() || null,
+    basePrice: typeof product.price === 'number' && !isNaN(product.price) ? product.price : null,
+    listPricePer100: typeof product.listPricePer100 === 'number' && !isNaN(product.listPricePer100) ? product.listPricePer100 : null,
+    wagoIdent: product.wagoIdent?.trim() || null,
+    distributorDiscount: typeof product.distributorDiscount === 'number' && !isNaN(product.distributorDiscount) ? product.distributorDiscount : 0,
+    minQty: typeof product.minQty === 'number' && !isNaN(product.minQty) ? Math.max(1, product.minQty) : 1,
+    categoryId: category.id,
+  }
+
+  if (existing) {
+    await prisma.part.update({ where: { id: existing.id }, data })
+    return 'updated'
+  } else {
+    await prisma.part.create({
+      data: { catalogId: masterCatalogId, partNumber, ...data },
+    })
+    return 'created'
+  }
+}
+
+// ── JSON import endpoint (used by the wizard UI) ──────────────────────────────
+
+/**
+ * POST /api/product-import/import-products
+ * Body: { products: MappedProduct[], updateOnly?: boolean }
+ * Accepts pre-mapped product objects from the frontend column-mapping wizard.
+ */
+export async function importProducts(req: Request, res: Response) {
+  const { products, updateOnly = false } = req.body ?? {}
+  if (!Array.isArray(products) || products.length === 0) {
+    return res.status(400).json({ message: 'No products provided.' })
+  }
+
+  const masterCatalog = await prisma.catalog.findFirst({ where: { isMaster: true } })
+  if (!masterCatalog) {
+    return res.status(500).json({ message: 'Master Catalog not found. Contact an administrator.' })
+  }
+
+  let imported = 0, updated = 0, skipped = 0, errors = 0
+  const errorDetails: string[] = []
+
+  for (const p of products) {
+    try {
+      const outcome = await upsertProduct(p as MappedProduct, masterCatalog.id, updateOnly)
+      if (outcome === 'created') imported++
+      else if (outcome === 'updated') updated++
+      else if (outcome === 'skipped') skipped++
+    } catch (err) {
+      errors++
+      if (errorDetails.length < 20)
+        errorDetails.push(`${p.partNumber ?? '?'}: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  return res.status(200).json({ imported, updated, skipped, errors, errorDetails })
+}
+
 /**
  * POST /api/product-import/import
  * Accepts a CSV file upload (field: "file") and upserts products into the Master Catalog.
