@@ -13,6 +13,9 @@ RUN npm run build
 # Runtime: Debian-based so native deps (bcrypt) have working prebuilds
 FROM node:22-slim
 
+# Prisma's schema engine requires OpenSSL; node:22-slim ships without it
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY package.json package-lock.json ./
