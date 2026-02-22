@@ -19,10 +19,17 @@ import cors from 'cors'
 import routes from './routes'
 
 function validateEnv() {
-  const dbUrl = process.env.DATABASE_URL?.trim()
+  const isProduction = process.env.NODE_ENV === 'production'
+  let dbUrl = process.env.DATABASE_URL?.trim()
   if (!dbUrl) {
-    console.error('[Startup] DATABASE_URL is missing. In Railway: add a Postgres database, then in your service Variables add DATABASE_URL (reference the Postgres service variable).')
-    throw new Error('DATABASE_URL is required')
+    if (isProduction) {
+      console.error('[Startup] DATABASE_URL is missing. In Railway: add a Postgres database, then in your service Variables add DATABASE_URL (reference the Postgres service variable).')
+      throw new Error('DATABASE_URL is required')
+    }
+    // Local dev: allow startup without DB so you can at least load the frontend; API will fail until DATABASE_URL is set
+    dbUrl = 'postgresql://localhost:5432/rsmtools'
+    process.env.DATABASE_URL = dbUrl
+    console.warn('[Startup] DATABASE_URL not set — using placeholder. Set DATABASE_URL in .env for real DB. API/auth will fail until then.')
   }
   let secret = process.env.JWT_SECRET?.trim()
   if (!secret || secret.length < 32) {

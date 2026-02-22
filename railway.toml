@@ -5,9 +5,8 @@
 builder = "dockerfile"
 
 [deploy]
-startCommand = "npm start"
+startCommand = "node dist/server.js"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 10
-
-# Run migrations before starting (Railway "Release Command" in dashboard)
-# Set in Railway: Settings -> Deploy -> Release Command = npm run release
+# Run DB migrations before each deploy (Railway calls this "Pre-Deploy Command")
+preDeployCommand = "npx prisma migrate deploy"
