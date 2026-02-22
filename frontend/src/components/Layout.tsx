@@ -22,8 +22,7 @@ export default function Layout() {
   const displayName = [user?.firstName, user?.lastName].filter(Boolean).join(' ') || user?.email || 'User'
 
   const navItems = [
-    { to: '/', label: 'Dashboard' },
-    { to: '/contracts', label: 'Pricing contracts' },
+    { to: '/', label: 'Pricing contracts' },
     ...(isAdminOrRsm ? [{ to: '/catalog', label: 'Master catalog' }] : []),
   ]
 
@@ -36,7 +35,7 @@ export default function Layout() {
         </div>
         <nav className="flex-1 space-y-0.5 p-3">
           {navItems.map(({ to, label }) => {
-            const isActive = to === '/' ? location.pathname === '/' : location.pathname.startsWith(to)
+            const isActive = to === '/' ? (location.pathname === '/' || location.pathname === '/contracts') : location.pathname.startsWith(to)
             return (
               <Link
                 key={to}

@@ -3,7 +3,6 @@ import { useAuth } from './lib/auth'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Register from './pages/Register'
-import Dashboard from './pages/Dashboard'
 import Contracts from './pages/Contracts'
 import ContractCreate from './pages/ContractCreate'
 import ContractDetail from './pages/ContractDetail'
@@ -36,7 +35,7 @@ export default function App() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Dashboard />} />
+        <Route index element={<Contracts />} />
         <Route path="contracts" element={<Contracts />} />
         <Route path="contracts/new" element={<ContractCreate />} />
         <Route path="contracts/:id" element={<ContractDetail />} />

@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { useAuth } from '../lib/auth'
 
 const TOKEN_KEY = 'rsm-tools-token'
 
@@ -23,7 +24,31 @@ interface BatchResult {
   error?: string
 }
 
+// Simple inline graphics (document, list, download)
+function IconDocument() {
+  return (
+    <svg className="h-10 w-10 text-wago-green" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+    </svg>
+  )
+}
+function IconList() {
+  return (
+    <svg className="h-10 w-10 text-wago-green" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.007v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm-.375 5.25h.007v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
+    </svg>
+  )
+}
+function IconDownload() {
+  return (
+    <svg className="h-10 w-10 text-wago-green" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+    </svg>
+  )
+}
+
 export default function Contracts() {
+  const { user } = useAuth()
   const navigate = useNavigate()
   const [contracts, setContracts] = useState<Contract[]>([])
   const [loading, setLoading] = useState(true)
@@ -48,8 +73,6 @@ export default function Contracts() {
   }, [token])
 
   useEffect(() => { fetchContracts() }, [fetchContracts])
-
-  // ── Batch PDF upload ────────────────────────────────────────────────────────
 
   async function uploadFiles(files: FileList | File[]) {
     const pdfs = Array.from(files).filter(f => f.name.toLowerCase().endsWith('.pdf'))
@@ -106,25 +129,99 @@ export default function Contracts() {
     fetchContracts()
   }
 
+  const totalItems = contracts.reduce((sum, c) => sum + (c._count?.items ?? 0), 0)
+
   return (
     <div>
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Pricing contracts</h1>
-          <p className="mt-1 text-sm text-gray-500">Drop one or more WAGO quote PDFs — each becomes a contract automatically.</p>
+      {/* Welcome + summary graphics */}
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-gray-900">
+          Pricing contracts
+        </h1>
+        <p className="mt-1 text-gray-600">
+          Welcome back{user?.firstName ? `, ${user.firstName}` : ''}. Create and manage WAGO pricing contracts from quote PDFs.
+        </p>
+
+        <div className="mt-6 grid gap-4 sm:grid-cols-3">
+          <div className="card flex items-center gap-4 p-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-green-50">
+              <IconDocument />
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-gray-900">{contracts.length}</p>
+              <p className="text-sm font-medium text-gray-600">Contracts</p>
+            </div>
+          </div>
+          <div className="card flex items-center gap-4 p-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-green-50">
+              <IconList />
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-gray-900">{loading ? '—' : totalItems}</p>
+              <p className="text-sm font-medium text-gray-600">Line items</p>
+            </div>
+          </div>
+          <div className="card flex items-center gap-4 p-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-green-50">
+              <IconDownload />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-gray-600">Download any contract as CSV when ready</p>
+            </div>
+          </div>
         </div>
+
+        {/* How it works — instruction flow */}
+        <div className="mt-8 rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+          <h2 className="text-lg font-semibold text-gray-900">How to create a pricing contract</h2>
+          <p className="mt-1 text-sm text-gray-500">Follow these steps to turn WAGO quote PDFs into contracts and CSV exports.</p>
+          <ol className="mt-6 space-y-6">
+            <li className="flex gap-4">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-wago-green text-sm font-bold text-white">1</span>
+              <div>
+                <p className="font-medium text-gray-900">Upload PDFs or create a contract</p>
+                <p className="mt-0.5 text-sm text-gray-600">
+                  Drop one or more WAGO quote PDFs in the zone below (or click to browse). Each PDF becomes a contract. You can also create an empty contract with &quot;Create manually&quot; and add PDFs later.
+                </p>
+              </div>
+            </li>
+            <li className="flex gap-4">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-wago-green text-sm font-bold text-white">2</span>
+              <div>
+                <p className="font-medium text-gray-900">Open a contract to edit line items</p>
+                <p className="mt-0.5 text-sm text-gray-600">
+                  Click &quot;View&quot; on any contract to see line items, set sell prices, upload more PDFs to the same contract, or re-check part numbers against the catalog.
+                </p>
+              </div>
+            </li>
+            <li className="flex gap-4">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-wago-green text-sm font-bold text-white">3</span>
+              <div>
+                <p className="font-medium text-gray-900">Download the contract as CSV</p>
+                <p className="mt-0.5 text-sm text-gray-600">
+                  From this page or from inside a contract, use &quot;CSV ↓&quot; to export the contract as a CSV file for your records or downstream systems.
+                </p>
+              </div>
+            </li>
+          </ol>
+        </div>
+      </div>
+
+      {/* Main actions: PDF drop + Create manually */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-gray-900">Create or add contracts</h2>
         <Link to="/contracts/new" className="btn-secondary text-sm">
           + Create manually
         </Link>
       </div>
 
-      {/* ── Batch PDF drop zone ── */}
+      {/* Batch PDF drop zone */}
       <div
         onDrop={handleDrop}
         onDragOver={e => { e.preventDefault(); setDragActive(true) }}
         onDragLeave={() => setDragActive(false)}
         onClick={() => !uploading && fileRef.current?.click()}
-        className={`mt-6 flex cursor-pointer flex-col items-center rounded-xl border-2 border-dashed px-8 py-10 transition-colors ${
+        className={`mt-4 flex cursor-pointer flex-col items-center rounded-xl border-2 border-dashed px-8 py-10 transition-colors ${
           dragActive ? 'border-wago-green bg-green-50' : 'border-gray-300 hover:border-wago-green hover:bg-gray-50'
         } ${uploading ? 'pointer-events-none opacity-60' : ''}`}
       >
@@ -145,7 +242,7 @@ export default function Contracts() {
         </p>
       </div>
 
-      {/* ── Upload results ── */}
+      {/* Upload results */}
       {uploadError && (
         <div className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{uploadError}</div>
       )}
@@ -185,7 +282,7 @@ export default function Contracts() {
         </div>
       )}
 
-      {/* ── Contract list ── */}
+      {/* Contract list */}
       <div className="mt-8">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">Your contracts</h2>
         {loading ? (
