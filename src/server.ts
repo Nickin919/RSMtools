@@ -16,20 +16,39 @@ process.on('unhandledRejection', (reason) => {
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
+import bcrypt from 'bcrypt'
 import routes from './routes'
 import { prisma } from './lib/prisma'
 
-async function ensureMasterCatalog() {
+async function ensureStartupData() {
   try {
-    const existing = await prisma.catalog.findFirst({ where: { isMaster: true } })
-    if (!existing) {
+    // Master Catalog
+    const existingCatalog = await prisma.catalog.findFirst({ where: { isMaster: true } })
+    if (!existingCatalog) {
       await prisma.catalog.create({
         data: { name: 'Master Catalog', description: 'Master product catalog', isMaster: true },
       })
       console.log('[Startup] Created Master Catalog')
     }
+
+    // Seed admin user from env vars
+    const adminEmail = process.env.SEED_ADMIN_EMAIL?.trim()
+    const adminPassword = process.env.SEED_ADMIN_PASSWORD?.trim()
+    if (adminEmail && adminPassword && adminPassword.length >= 8) {
+      const existing = await prisma.user.findUnique({ where: { email: adminEmail } })
+      if (!existing) {
+        const passwordHash = await bcrypt.hash(adminPassword, 10)
+        await prisma.user.create({
+          data: { email: adminEmail, passwordHash, firstName: 'Admin', lastName: 'User', role: 'ADMIN' },
+        })
+        console.log('[Startup] Created admin user:', adminEmail)
+      } else if (existing.role !== 'ADMIN') {
+        await prisma.user.update({ where: { email: adminEmail }, data: { role: 'ADMIN' } })
+        console.log('[Startup] Promoted existing user to ADMIN:', adminEmail)
+      }
+    }
   } catch (err) {
-    console.warn('[Startup] Could not ensure Master Catalog (DB may not be ready yet):', (err as Error).message)
+    console.warn('[Startup] Could not run startup data setup:', (err as Error).message)
   }
 }
 
@@ -95,5 +114,5 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 const port = Number(process.env.PORT) || 3000
 app.listen(port, () => {
   console.log(`Server listening on port ${port}`)
-  void ensureMasterCatalog()
+  void ensureStartupData()
 })
