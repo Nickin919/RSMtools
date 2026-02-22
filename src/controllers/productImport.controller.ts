@@ -18,53 +18,9 @@ interface MappedProduct {
   minQty?: number | null
 }
 
-async function upsertProduct(
-  product: MappedProduct,
-  masterCatalogId: string,
-  updateOnly: boolean,
-): Promise<'created' | 'updated' | 'skipped' | 'error'> {
-  const partNumber = product.partNumber?.trim()
-  if (!partNumber) return 'skipped'
-
-  const categoryName = product.category?.trim() || 'General'
-
-  let category = await prisma.category.findFirst({
-    where: { catalogId: masterCatalogId, name: categoryName },
-  })
-  if (!category) {
-    if (updateOnly) return 'skipped'
-    category = await prisma.category.create({
-      data: { catalogId: masterCatalogId, name: categoryName },
-    })
-  }
-
-  const existing = await prisma.part.findUnique({
-    where: { catalogId_partNumber: { catalogId: masterCatalogId, partNumber } },
-  })
-
-  if (!existing && updateOnly) return 'skipped'
-
-  const data = {
-    series: product.series?.trim() || null,
-    description: product.description?.trim() || partNumber,
-    englishDescription: product.englishDescription?.trim() || null,
-    basePrice: typeof product.price === 'number' && !isNaN(product.price) ? product.price : null,
-    listPricePer100: typeof product.listPricePer100 === 'number' && !isNaN(product.listPricePer100) ? product.listPricePer100 : null,
-    wagoIdent: product.wagoIdent?.trim() || null,
-    distributorDiscount: typeof product.distributorDiscount === 'number' && !isNaN(product.distributorDiscount) ? product.distributorDiscount : 0,
-    minQty: typeof product.minQty === 'number' && !isNaN(product.minQty) ? Math.max(1, product.minQty) : 1,
-    categoryId: category.id,
-  }
-
-  if (existing) {
-    await prisma.part.update({ where: { id: existing.id }, data })
-    return 'updated'
-  } else {
-    await prisma.part.create({
-      data: { catalogId: masterCatalogId, partNumber, ...data },
-    })
-    return 'created'
-  }
+function safeNum(v: unknown): number | null {
+  const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''))
+  return isNaN(n) ? null : n
 }
 
 // ── JSON import endpoint (used by the wizard UI) ──────────────────────────────
@@ -72,7 +28,9 @@ async function upsertProduct(
 /**
  * POST /api/product-import/import-products
  * Body: { products: MappedProduct[], updateOnly?: boolean }
- * Accepts pre-mapped product objects from the frontend column-mapping wizard.
+ *
+ * Bulk-optimised: loads categories + existing part numbers in 2 queries,
+ * then bulk-inserts new parts and batches updates — handles 25k rows easily.
  */
 export async function importProducts(req: Request, res: Response) {
   const { products, updateOnly = false } = req.body ?? {}
@@ -84,20 +42,144 @@ export async function importProducts(req: Request, res: Response) {
   if (!masterCatalog) {
     return res.status(500).json({ message: 'Master Catalog not found. Contact an administrator.' })
   }
+  const catalogId = masterCatalog.id
 
-  let imported = 0, updated = 0, skipped = 0, errors = 0
+  // ── 1. Normalise input rows ───────────────────────────────────────────────
+  interface NormRow {
+    partNumber: string
+    categoryName: string
+    series: string | null
+    description: string
+    englishDescription: string | null
+    basePrice: number | null
+    listPricePer100: number | null
+    wagoIdent: string | null
+    distributorDiscount: number
+    minQty: number
+  }
+
+  const rows: NormRow[] = []
+  let skipped = 0
+  for (const p of products as MappedProduct[]) {
+    const partNumber = p.partNumber?.trim()
+    if (!partNumber) { skipped++; continue }
+    rows.push({
+      partNumber,
+      categoryName: p.category?.trim() || 'General',
+      series: p.series?.trim() || null,
+      description: p.description?.trim() || partNumber,
+      englishDescription: p.englishDescription?.trim() || null,
+      basePrice: safeNum(p.price),
+      listPricePer100: safeNum(p.listPricePer100),
+      wagoIdent: p.wagoIdent?.trim() || null,
+      distributorDiscount: safeNum(p.distributorDiscount) ?? 0,
+      minQty: Math.max(1, safeNum(p.minQty) ?? 1),
+    })
+  }
+
+  // ── 2. Ensure all referenced categories exist (one round-trip) ───────────
+  const neededCatNames = [...new Set(rows.map(r => r.categoryName))]
+
+  const existingCats = await prisma.category.findMany({
+    where: { catalogId, name: { in: neededCatNames } },
+    select: { id: true, name: true },
+  })
+  const catMap = new Map<string, string>(existingCats.map(c => [c.name, c.id]))
+
+  const missingCatNames = neededCatNames.filter(n => !catMap.has(n))
+  if (missingCatNames.length > 0 && !updateOnly) {
+    // createMany with skipDuplicates handles race conditions
+    await prisma.category.createMany({
+      data: missingCatNames.map(name => ({ catalogId, name })),
+      skipDuplicates: true,
+    })
+    // Reload just the newly created ones
+    const newCats = await prisma.category.findMany({
+      where: { catalogId, name: { in: missingCatNames } },
+      select: { id: true, name: true },
+    })
+    newCats.forEach(c => catMap.set(c.name, c.id))
+  }
+
+  // ── 3. Load all existing part numbers for this catalog (one round-trip) ──
+  const existingParts = await prisma.part.findMany({
+    where: { catalogId },
+    select: { partNumber: true, id: true },
+  })
+  const existingMap = new Map<string, string>(existingParts.map(p => [p.partNumber, p.id]))
+
+  // ── 4. Split rows into creates vs updates ─────────────────────────────────
+  const toCreate: NormRow[] = []
+  const toUpdate: NormRow[] = []
+
+  for (const row of rows) {
+    if (!catMap.has(row.categoryName)) { skipped++; continue } // no category = updateOnly skipped earlier
+    if (existingMap.has(row.partNumber)) {
+      toUpdate.push(row)
+    } else {
+      if (updateOnly) { skipped++; continue }
+      toCreate.push(row)
+    }
+  }
+
+  // ── 5. Bulk insert new parts ──────────────────────────────────────────────
+  let imported = 0, updated = 0, errors = 0
   const errorDetails: string[] = []
 
-  for (const p of products) {
+  if (toCreate.length > 0) {
     try {
-      const outcome = await upsertProduct(p as MappedProduct, masterCatalog.id, updateOnly)
-      if (outcome === 'created') imported++
-      else if (outcome === 'updated') updated++
-      else if (outcome === 'skipped') skipped++
+      const result = await prisma.part.createMany({
+        data: toCreate.map(r => ({
+          catalogId,
+          categoryId: catMap.get(r.categoryName)!,
+          partNumber: r.partNumber,
+          series: r.series,
+          description: r.description,
+          englishDescription: r.englishDescription,
+          basePrice: r.basePrice,
+          listPricePer100: r.listPricePer100,
+          wagoIdent: r.wagoIdent,
+          distributorDiscount: r.distributorDiscount,
+          minQty: r.minQty,
+        })),
+        skipDuplicates: true,
+      })
+      imported = result.count
     } catch (err) {
-      errors++
-      if (errorDetails.length < 20)
-        errorDetails.push(`${p.partNumber ?? '?'}: ${err instanceof Error ? err.message : String(err)}`)
+      errors += toCreate.length
+      errorDetails.push(`Bulk create failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  // ── 6. Batch updates (chunks of 200 concurrent) ───────────────────────────
+  const BATCH = 200
+  for (let i = 0; i < toUpdate.length; i += BATCH) {
+    const chunk = toUpdate.slice(i, i + BATCH)
+    const results = await Promise.allSettled(
+      chunk.map(r =>
+        prisma.part.update({
+          where: { catalogId_partNumber: { catalogId, partNumber: r.partNumber } },
+          data: {
+            categoryId: catMap.get(r.categoryName)!,
+            series: r.series,
+            description: r.description,
+            englishDescription: r.englishDescription,
+            basePrice: r.basePrice,
+            listPricePer100: r.listPricePer100,
+            wagoIdent: r.wagoIdent,
+            distributorDiscount: r.distributorDiscount,
+            minQty: r.minQty,
+          },
+        })
+      )
+    )
+    for (const r of results) {
+      if (r.status === 'fulfilled') { updated++ }
+      else {
+        errors++
+        if (errorDetails.length < 20)
+          errorDetails.push(r.reason instanceof Error ? r.reason.message : String(r.reason))
+      }
     }
   }
 
