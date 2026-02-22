@@ -1,0 +1,158 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  FREE
+  BASIC
+  TURNKEY
+  DISTRIBUTOR
+  RSM
+  ADMIN
+  DISTRIBUTOR_REP
+  DIRECT_USER
+  BASIC_USER
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String?   @unique
+  passwordHash String?   @map("password_hash")
+  firstName   String?   @map("first_name")
+  lastName    String?   @map("last_name")
+  role        UserRole  @default(BASIC_USER)
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  priceContractsCreated PriceContract[]
+  priceChanges          PriceHistory[] @relation("PriceChanges")
+
+  @@map("users")
+}
+
+model Catalog {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  isMaster    Boolean   @default(false) @map("is_master")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  categories Category[]
+  parts      Part[]
+
+  @@map("catalogs")
+}
+
+model Category {
+  id         String   @id @default(uuid())
+  catalogId  String   @map("catalog_id")
+  parentId   String?  @map("parent_id")
+  name       String
+  order      Int      @default(0)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  catalog   Catalog   @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+  parent    Category? @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children  Category[] @relation("CategoryHierarchy")
+  parts     Part[]
+  priceContractItems PriceContractItem[]
+
+  @@index([catalogId])
+  @@index([parentId])
+  @@map("categories")
+}
+
+model Part {
+  id                   String   @id @default(uuid())
+  catalogId            String   @map("catalog_id")
+  categoryId           String   @map("category_id")
+  partNumber           String   @map("part_number")
+  series               String?
+  description          String   @db.Text
+  englishDescription   String?  @map("english_description") @db.Text
+  minQty               Int      @default(1) @map("min_qty")
+  packageQty           Int      @default(1) @map("package_qty")
+  basePrice            Float?   @map("base_price")
+  listPricePer100      Float?   @map("list_price_per_100")
+  wagoIdent            String?  @map("wago_ident")
+  distributorDiscount  Float    @default(0) @map("distributor_discount")
+  active               Boolean  @default(true)
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  catalog       Catalog   @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+  category      Category  @relation(fields: [categoryId], references: [id])
+  priceHistory  PriceHistory[]
+  priceContractItems PriceContractItem[]
+
+  @@unique([catalogId, partNumber])
+  @@index([catalogId])
+  @@index([categoryId])
+  @@map("parts")
+}
+
+model PriceHistory {
+  id           String   @id @default(uuid())
+  partId       String   @map("part_id")
+  partNumber   String   @map("part_number")
+  oldPrice     Float    @map("old_price")
+  newPrice     Float    @map("new_price")
+  changedById  String   @map("changed_by_id")
+  importBatch  String?  @map("import_batch")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  part       Part @relation(fields: [partId], references: [id], onDelete: Cascade)
+  changedBy  User @relation("PriceChanges", fields: [changedById], references: [id])
+
+  @@index([partId])
+  @@map("price_history")
+}
+
+model PriceContract {
+  id          String    @id @default(uuid())
+  name        String
+  description String?   @db.Text
+  validFrom   DateTime? @map("valid_from")
+  validTo     DateTime? @map("valid_to")
+  createdById String    @map("created_by_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  createdBy User               @relation(fields: [createdById], references: [id])
+  items     PriceContractItem[]
+
+  @@index([createdById])
+  @@map("price_contracts")
+}
+
+model PriceContractItem {
+  id                 String    @id @default(uuid())
+  contractId         String    @map("contract_id")
+  partId             String?   @map("part_id")
+  partNumber         String?   @map("part_number")
+  categoryId         String?   @map("category_id")
+  seriesOrGroup      String?   @map("series_or_group")
+  costPrice          Float     @map("cost_price")
+  suggestedSellPrice Float?    @map("suggested_sell_price")
+  discountPercent    Float?    @map("discount_percent")
+  minQuantity        Int       @default(1) @map("min_quantity")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  contract PriceContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  part     Part?         @relation(fields: [partId], references: [id], onDelete: SetNull)
+  category Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([contractId])
+  @@index([partId])
+  @@index([categoryId])
+  @@map("price_contract_items")
+}

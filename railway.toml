@@ -1,0 +1,13 @@
+# Railway deployment config
+# https://docs.railway.app/reference/config-as-code
+
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "npm start"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
+
+# Run migrations before starting (Railway "Release Command" in dashboard)
+# Set in Railway: Settings -> Deploy -> Release Command = npm run release

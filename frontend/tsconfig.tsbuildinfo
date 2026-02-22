@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/components/layout.tsx","./src/lib/auth.tsx","./src/pages/catalogupload.tsx","./src/pages/contractcreate.tsx","./src/pages/contractdetail.tsx","./src/pages/contracts.tsx","./src/pages/dashboard.tsx","./src/pages/login.tsx","./src/pages/register.tsx"],"version":"5.9.3"}
