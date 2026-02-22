@@ -28,5 +28,6 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/frontend/dist ./frontend/dist
 
 ENV NODE_ENV=production
-EXPOSE 3000
+# PORT is set by Railway (default 8080); expose it so Railway's proxy knows the port
+EXPOSE 8080
 CMD ["node", "dist/server.js"]
