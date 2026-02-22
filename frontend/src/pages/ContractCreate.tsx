@@ -26,7 +26,7 @@ export default function ContractCreate() {
       })
       if (!res.ok) throw new Error('Failed to create contract')
       const data = await res.json()
-      navigate(`/contracts/${data.id}`, { replace: true })
+      navigate(`/contracts/${data.contract?.id ?? data.id}`, { replace: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
