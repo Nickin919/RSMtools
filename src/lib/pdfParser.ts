@@ -1,4 +1,6 @@
-import pdfParse from 'pdf-parse'
+// pdf-parse uses CJS exports; require() is the reliable way to call it
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const pdfParse = require('pdf-parse') as (data: Buffer) => Promise<{ text: string; numpages: number }>
 import fs from 'fs'
 
 export interface ParsedRow {
