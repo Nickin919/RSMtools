@@ -217,7 +217,7 @@ export async function renameContract(req: Request, res: Response) {
   if (!contract) return res.status(404).json({ message: 'Contract not found.' })
   if (!canAccess(user.id, user.role, contract.createdById)) return res.status(403).json({ message: 'Access denied.' })
 
-  const data: { name?: string; quoteNumber?: string; quoteCore?: string | null; quoteYear?: number | null; quotePrefix?: string | null; quoteRevision?: string | null } = {}
+  const data: { name?: string; quoteNumber?: string | null; quoteCore?: string | null; quoteYear?: number | null; quotePrefix?: string | null; quoteRevision?: string | null } = {}
   if (name !== undefined) {
     if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ message: 'Name is required.' })
     data.name = name.trim()
