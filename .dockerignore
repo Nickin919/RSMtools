@@ -1,0 +1,12 @@
+node_modules
+frontend/node_modules
+.git
+.env
+.env.*
+*.log
+dist
+frontend/dist
+.cursor
+docs
+*.md
+!README.md

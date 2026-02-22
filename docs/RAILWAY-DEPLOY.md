@@ -30,14 +30,14 @@ git push -u origin main
      `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
    - Optional: `PORT` – Railway sets this automatically; only override if needed.
 
-## 4. Configure build and release
+## 4. Build and release (Dockerfile)
+
+The repo includes a **custom Dockerfile** so the built frontend is kept in the image (Nixpacks’ default flow overwrites it). Railway will use this Dockerfile when present.
 
 1. Open your **app service** → **Settings**.
-2. **Build**:
-   - Build Command: `npm run build`  
-     (or leave default if it already runs `npm run build`).
+2. **Build**: Leave default (Dockerfile build). No need to set a custom build command.
 3. **Deploy**:
-   - Start Command: `npm start` (or leave default `node dist/server.js`).
+   - Start Command: leave default (image runs `node dist/server.js`).
    - **Release Command**: `npm run release`  
      This runs `prisma migrate deploy` before each deploy so the DB schema is up to date.
 
@@ -71,5 +71,6 @@ To show the login app at **rsmtools.com** instead of the GitHub README:
 
 ## 7. Frontend and API from one deployment
 
-- The **build** step builds both the backend and the React frontend; the server serves the built app from `/` and the API from `/api`.
-- The same Railway URL (or your custom domain) serves the login screen and all API routes. For local dev, run the backend with `npm run dev` and the frontend with `cd frontend && npm run dev` (Vite proxies `/api` to the backend).
+- The **Dockerfile** builds backend and React frontend and keeps `frontend/dist` in the image so the server can serve it.
+- The server serves the built app from `/` and the API from `/api`. The same Railway URL (or your custom domain) serves the login screen and all API routes.
+- For local dev, run the backend with `npm run dev` and the frontend with `cd frontend && npm run dev` (Vite proxies `/api` to the backend).
