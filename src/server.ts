@@ -1,4 +1,6 @@
 import crypto from 'crypto'
+import fs from 'fs'
+import path from 'path'
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
@@ -32,9 +34,18 @@ app.use(express.json())
 
 app.use('/api', routes)
 
-app.use((_req, res) => {
-  res.status(404).json({ message: 'Not found' })
-})
+// Serve built frontend (login app) when present (e.g. production on Railway)
+const frontendDir = path.join(__dirname, '..', 'frontend', 'dist')
+if (fs.existsSync(frontendDir)) {
+  app.use(express.static(frontendDir))
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(frontendDir, 'index.html'))
+  })
+} else {
+  app.use((_req, res) => {
+    res.status(404).json({ message: 'Not found' })
+  })
+}
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('Unhandled error:', err)

@@ -56,18 +56,20 @@ git push -u origin main
      ```
    - To create a seed admin, set `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` in the app’s Variables, then run the seed command again (or run it once after adding those vars).
 
-## 6. Frontend (API URL)
+## 6. Custom domain (e.g. rsmtools.com)
 
-- The backend will get a URL like `https://your-app.up.railway.app`.
-- For local frontend dev, keep using the Vite proxy to `http://localhost:3000`.
-- For a production frontend (e.g. Vite build hosted elsewhere), set the API base URL to your Railway backend URL (e.g. `VITE_API_URL=https://your-app.up.railway.app` and use it in `fetch`/axios). The backend already has CORS enabled for cross-origin requests.
+To show the login app at **rsmtools.com** instead of the GitHub README:
 
-## 7. Optional: serve frontend from the same app
+1. **Point the domain to Railway**, not to GitHub:
+   - In Railway: open your **app service** → **Settings** → **Networking** (or **Domains**).
+   - Add a **custom domain**: `rsmtools.com` (and optionally `www.rsmtools.com`).
+   - Railway will show the **CNAME target** (e.g. `your-app.up.railway.app`) and any DNS records needed.
+2. **At your domain registrar** (where you bought rsmtools.com): add a **CNAME** record for `rsmtools.com` (or the subdomain Railway gives) pointing to that Railway target. If Railway provides an **A** record (IP), use that instead when they instruct.
+3. After DNS propagates, visiting **https://rsmtools.com** will hit your Railway app, which serves both the React login UI and the API.
 
-To serve the built frontend from the Node app on Railway:
+**Note:** If rsmtools.com currently shows the GitHub README, the domain is likely pointed at GitHub (e.g. GitHub Pages or repo). Change DNS to point at Railway’s URL instead.
 
-1. In the repo root, build the frontend and copy it into the backend:
-   - Add to `package.json` scripts: `"build:full": "npm run build && cd frontend && npm ci && npm run build"`.
-   - In `server.ts`, serve static files from `frontend/dist` (or a `public` folder you copy into).
-2. Set Railway **Build Command** to `npm run build:full` (and ensure the start command still runs the Node server).
-3. Then the same Railway URL serves both API and the React app.
+## 7. Frontend and API from one deployment
+
+- The **build** step builds both the backend and the React frontend; the server serves the built app from `/` and the API from `/api`.
+- The same Railway URL (or your custom domain) serves the login screen and all API routes. For local dev, run the backend with `npm run dev` and the frontend with `cd frontend && npm run dev` (Vite proxies `/api` to the backend).
