@@ -1,13 +1,17 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 
-function initials(name: string | null, email: string | null): string {
-  if (name?.trim()) {
-    const parts = name.trim().split(/\s+/)
-    if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-    return name.slice(0, 2).toUpperCase()
+function initials(firstName: string | null, lastName: string | null, email: string | null): string {
+  const first = firstName?.trim()
+  const last = lastName?.trim()
+  if (first && last) return (first[0] + last[0]).toUpperCase()
+  if (first) return first.slice(0, 2).toUpperCase()
+  if (last) return last.slice(0, 2).toUpperCase()
+  if (email?.trim()) {
+    const [local, domain] = email.trim().split('@')
+    if (local && domain) return (local[0] + domain[0]).toUpperCase()
+    return email.slice(0, 2).toUpperCase()
   }
-  if (email) return email.slice(0, 2).toUpperCase()
   return 'U'
 }
 
@@ -55,7 +59,7 @@ export default function Layout() {
           <div className="flex items-center gap-3">
             <span className="text-sm text-gray-600">{displayName}</span>
             <span className="flex h-8 w-8 items-center justify-center rounded-full bg-wago-green text-xs font-medium text-white">
-              {initials(displayName, user?.email ?? null)}
+              {initials(user?.firstName ?? null, user?.lastName ?? null, user?.email ?? null)}
             </span>
             <button type="button" onClick={logout} className="btn-secondary text-sm">
               Sign out

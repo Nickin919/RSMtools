@@ -105,9 +105,9 @@ export async function getCurrentUser(req: Request, res: Response) {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user.id },
-      select: { id: true, email: true, firstName: true, lastName: true, role: true },
+      select: { id: true, email: true, firstName: true, lastName: true, role: true, isActive: true },
     })
-    if (!user || !req.user.isActive) {
+    if (!user || !user.isActive) {
       return res.status(401).json({ message: 'User not found or inactive' })
     }
     return res.status(200).json({ user: sanitizeUser(user) })
