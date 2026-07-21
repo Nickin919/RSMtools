@@ -12,9 +12,9 @@ const tools = [
   {
     title: 'Product Finder',
     description: 'Search and browse the WAGO catalog.',
-    to: '#',
+    to: '/product-finder',
     requiresLogin: false,
-    available: false,
+    available: true,
   },
   {
     title: '750 I/O Configurator',

@@ -25,6 +25,7 @@ export default function Layout() {
   const navItems = [
     { to: '/', label: 'Home' },
     { to: '/contracts', label: 'Pricing contracts' },
+    { to: '/product-finder', label: 'Product Finder' },
   ]
 
   return (

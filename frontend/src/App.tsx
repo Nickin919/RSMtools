@@ -7,6 +7,7 @@ import Home from './pages/Home'
 import Contracts from './pages/Contracts'
 import ContractCreate from './pages/ContractCreate'
 import ContractDetail from './pages/ContractDetail'
+import ProductFinder from './features/product-finder/ProductFinder'
 
 function RequireSession({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="contracts" element={<Contracts />} />
         <Route path="contracts/new" element={<ContractCreate />} />
         <Route path="contracts/:id" element={<ContractDetail />} />
+        <Route path="product-finder" element={<ProductFinder />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

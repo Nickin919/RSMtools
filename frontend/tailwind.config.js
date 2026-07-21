@@ -8,6 +8,9 @@ export default {
         'wago-darkgreen': '#007A3D',
         'wago-blue': '#0066A1',
         'wago-gray': '#58595B',
+        // Aliases matching WAIGO Product Finder tokens
+        'wago-primary': '#00A651',
+        'wago-secondary': '#007A3D',
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
