@@ -1,7 +1,6 @@
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useEffect, useState, useRef } from 'react'
-
-const TOKEN_KEY = 'rsm-tools-token'
+import { priceContractsApi } from '../lib/priceContractsApi'
 
 interface Part {
   id: string
@@ -52,7 +51,6 @@ function pctOff(listPrice: number, costPrice: number): number | null {
 export default function ContractDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const token = localStorage.getItem(TOKEN_KEY)
 
   const [contract, setContract] = useState<Contract | null>(null)
   const [loading, setLoading] = useState(true)
@@ -83,10 +81,6 @@ export default function ContractDetail() {
   const [moqEdit, setMoqEdit] = useState<{ itemId: string; value: string } | null>(null)
   const [savingMoqId, setSavingMoqId] = useState<string | null>(null)
 
-  // Recheck all
-  const [recheckingAll, setRecheckingAll] = useState(false)
-  const [recheckResult, setRecheckResult] = useState<{ matched: number; unmatched: number } | null>(null)
-
   // Rename
   const [editingName, setEditingName] = useState(false)
   const [renameValue, setRenameValue] = useState('')
@@ -99,13 +93,12 @@ export default function ContractDetail() {
 
   function fetchContract() {
     if (!id) return
-    fetch(`/api/price-contracts/${id}`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.ok ? r.json() : Promise.reject())
+    priceContractsApi.get(id)
       .then(data => {
-        const c: Contract = data.contract ?? data
+        const c = (data?.contract ?? data) as Contract
         setContract(c)
         // Auto-select all product rows
-        const productIds = new Set(c.items.filter(i => i.partNumber).map(i => i.id))
+        const productIds = new Set((c.items ?? []).filter(i => i.partNumber).map(i => i.id))
         setSelectedIds(productIds)
       })
       .catch(() => setContract(null))
@@ -118,17 +111,20 @@ export default function ContractDetail() {
     const pdfs = Array.from(files).filter(f => f.name.toLowerCase().endsWith('.pdf'))
     if (!pdfs.length || !id) return
     setUploading(true); setUploadMsg('')
-    const formData = new FormData()
-    pdfs.forEach(f => formData.append('pdf', f))
     try {
-      const res = await fetch(`/api/price-contracts/${id}/items/upload-pdfs`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: formData,
-      })
-      const data = await res.json().catch(() => ({}))
-      if (res.ok) { setUploadMsg(`✓ ${data.totalImported ?? 0} items added`); fetchContract() }
-      else setUploadMsg(data.message || 'Upload failed')
-    } catch { setUploadMsg('Upload failed') }
-    finally { setUploading(false); if (fileRef.current) fileRef.current.value = '' }
+      let totalImported = 0
+      for (const file of pdfs) {
+        const data = await priceContractsApi.uploadPdf(id, file) as { imported?: number; totalImported?: number }
+        totalImported += data?.imported ?? data?.totalImported ?? 0
+      }
+      setUploadMsg(`✓ ${totalImported} items added`)
+      fetchContract()
+    } catch (e) {
+      setUploadMsg(e instanceof Error ? e.message : 'Upload failed')
+    } finally {
+      setUploading(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
   }
 
   // ── Recheck / save item ─────────────────────────────────────────────────────
@@ -141,28 +137,33 @@ export default function ContractDetail() {
     if (isNaN(costPrice) || costPrice < 0) { alert('Enter a valid cost price'); return }
     setRecheckingId(item.id)
     try {
-      const res = await fetch(`/api/price-contracts/${id}/items/${item.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ partNumber, costPrice }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (res.ok) {
-        setContract(prev => prev ? { ...prev, items: prev.items.map(i => i.id === item.id ? data.item : i) } : null)
+      const data = await priceContractsApi.updateItem(id, item.id, { partNumber, costPrice }) as { item?: Item }
+      const updated = data?.item
+      if (updated) {
+        setContract(prev => prev ? { ...prev, items: prev.items.map(i => i.id === item.id ? updated : i) } : null)
+        setEdits(prev => { const n = { ...prev }; delete n[item.id]; return n })
+      } else {
+        fetchContract()
         setEdits(prev => { const n = { ...prev }; delete n[item.id]; return n })
       }
-    } finally { setRecheckingId(null) }
+    } catch {
+      /* ignore */
+    } finally {
+      setRecheckingId(null)
+    }
   }
 
   async function handleRemove(item: Item) {
     if (!id || !window.confirm('Remove this item?')) return
     setRemovingId(item.id)
     try {
-      await fetch(`/api/price-contracts/${id}/items/${item.id}`, {
-        method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
-      })
+      await priceContractsApi.removeItem(id, item.id)
       setContract(prev => prev ? { ...prev, items: prev.items.filter(i => i.id !== item.id) } : null)
-    } finally { setRemovingId(null) }
+    } catch {
+      /* ignore */
+    } finally {
+      setRemovingId(null)
+    }
   }
 
   // ── Suggested sell price margin ─────────────────────────────────────────────
@@ -187,13 +188,13 @@ export default function ContractDetail() {
     if (isNaN(margin) || margin < 0 || margin >= 100) { alert('Enter a margin between 0 and 99'); return }
     setApplyingMargin(true)
     try {
-      const res = await fetch(`/api/price-contracts/${id}/items/bulk-sell-price`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ itemIds: ids, marginPercent: margin }),
-      })
-      if (res.ok) fetchContract()
-    } finally { setApplyingMargin(false) }
+      await priceContractsApi.bulkSellPrice(id, { itemIds: ids, marginPercent: margin })
+      fetchContract()
+    } catch {
+      /* ignore */
+    } finally {
+      setApplyingMargin(false)
+    }
   }
 
   async function applyFixedPrice() {
@@ -203,13 +204,14 @@ export default function ContractDetail() {
     if (isNaN(price) || price < 0) { alert('Enter a valid price (e.g. 20 or 20.00)'); return }
     setApplyingFixed(true)
     try {
-      const res = await fetch(`/api/price-contracts/${id}/items/bulk-sell-price`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ itemIds: ids, suggestedSellPrice: price }),
-      })
-      if (res.ok) { fetchContract(); setFixedSellPrice('') }
-    } finally { setApplyingFixed(false) }
+      await priceContractsApi.bulkSellPrice(id, { itemIds: ids, suggestedSellPrice: price })
+      fetchContract()
+      setFixedSellPrice('')
+    } catch {
+      /* ignore */
+    } finally {
+      setApplyingFixed(false)
+    }
   }
 
   async function saveSingleSellPrice(itemId: string, value: string) {
@@ -219,16 +221,15 @@ export default function ContractDetail() {
     setSavingSellPriceId(itemId)
     setSellPriceEdit(null)
     try {
-      const res = await fetch(`/api/price-contracts/${id}/items/${itemId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ suggestedSellPrice: price }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (res.ok && data.item) {
-        setContract(prev => prev ? { ...prev, items: prev.items.map(i => i.id === itemId ? data.item : i) } : null)
+      const data = await priceContractsApi.updateItem(id, itemId, { suggestedSellPrice: price }) as { item?: Item }
+      if (data?.item) {
+        setContract(prev => prev ? { ...prev, items: prev.items.map(i => i.id === itemId ? data.item! : i) } : null)
       }
-    } finally { setSavingSellPriceId(null) }
+    } catch {
+      /* ignore */
+    } finally {
+      setSavingSellPriceId(null)
+    }
   }
 
   async function applyFixedMoq() {
@@ -238,13 +239,14 @@ export default function ContractDetail() {
     if (!moqStr) { alert('Enter an MOQ value (e.g. 1 or 5)'); return }
     setApplyingMoq(true)
     try {
-      const res = await fetch(`/api/price-contracts/${id}/items/bulk-moq`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ itemIds: ids, moq: moqStr }),
-      })
-      if (res.ok) { fetchContract(); setFixedMoq('') }
-    } finally { setApplyingMoq(false) }
+      await priceContractsApi.bulkMoq(id, { itemIds: ids, moq: moqStr })
+      fetchContract()
+      setFixedMoq('')
+    } catch {
+      /* ignore */
+    } finally {
+      setApplyingMoq(false)
+    }
   }
 
   async function saveSingleMoq(itemId: string, value: string) {
@@ -254,27 +256,27 @@ export default function ContractDetail() {
     setSavingMoqId(itemId)
     setMoqEdit(null)
     try {
-      const res = await fetch(`/api/price-contracts/${id}/items/${itemId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ moq: moqStr }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (res.ok && data.item) {
-        setContract(prev => prev ? { ...prev, items: prev.items.map(i => i.id === itemId ? data.item : i) } : null)
+      const data = await priceContractsApi.updateItem(id, itemId, { moq: moqStr }) as { item?: Item }
+      if (data?.item) {
+        setContract(prev => prev ? { ...prev, items: prev.items.map(i => i.id === itemId ? data.item! : i) } : null)
       }
-    } finally { setSavingMoqId(null) }
+    } catch {
+      /* ignore */
+    } finally {
+      setSavingMoqId(null)
+    }
   }
 
   // ── Rename ──────────────────────────────────────────────────────────────────
   async function saveRename() {
     if (!id || !renameValue.trim()) return
-    const res = await fetch(`/api/price-contracts/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ name: renameValue.trim() }),
-    })
-    if (res.ok) { setContract(prev => prev ? { ...prev, name: renameValue.trim() } : null); setEditingName(false) }
+    try {
+      await priceContractsApi.update(id, { name: renameValue.trim() })
+      setContract(prev => prev ? { ...prev, name: renameValue.trim() } : null)
+      setEditingName(false)
+    } catch {
+      /* ignore */
+    }
   }
 
   // ── Quote # edit ────────────────────────────────────────────────────────────
@@ -282,14 +284,11 @@ export default function ContractDetail() {
     if (!id) return
     setSavingQuoteNumber(true)
     try {
-      const res = await fetch(`/api/price-contracts/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ quoteNumber: quoteNumberValue.trim() || null }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (res.ok && data.contract) {
-        const c = data.contract
+      const data = await priceContractsApi.update(id, { quoteNumber: quoteNumberValue.trim() || undefined }) as {
+        contract?: Partial<Contract>
+      }
+      const c = data?.contract
+      if (c) {
         setContract(prev => prev ? {
           ...prev,
           name: c.name ?? prev.name,
@@ -298,7 +297,12 @@ export default function ContractDetail() {
           quoteYear: c.quoteYear ?? null,
         } : null)
         setEditingQuoteNumber(false)
+      } else {
+        setContract(prev => prev ? { ...prev, quoteNumber: quoteNumberValue.trim() || null } : null)
+        setEditingQuoteNumber(false)
       }
+    } catch {
+      /* ignore */
     } finally {
       setSavingQuoteNumber(false)
     }
@@ -309,15 +313,7 @@ export default function ContractDetail() {
     if (!id || !contract?.quoteCore) return
     setDownloadingFamily(true)
     try {
-      const res = await fetch(`/api/price-contracts/${id}/download-quote-family`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        alert(data.message || 'Download failed')
-        return
-      }
-      const blob = await res.blob()
+      const blob = await priceContractsApi.downloadQuoteFamily(id)
       const label = contract.quoteYear != null ? `${contract.quoteCore}-${contract.quoteYear}` : contract.quoteCore
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -325,39 +321,35 @@ export default function ContractDetail() {
       a.download = `quote-family-${label}.zip`
       a.click()
       URL.revokeObjectURL(url)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Download failed')
     } finally {
       setDownloadingFamily(false)
     }
   }
 
-  // ── Recheck all items ───────────────────────────────────────────────────────
-  async function recheckAll() {
-    if (!id) return
-    setRecheckingAll(true); setRecheckResult(null)
-    try {
-      const res = await fetch(`/api/price-contracts/${id}/recheck-all`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}` },
-      })
-      const data = await res.json().catch(() => ({}))
-      if (res.ok) { setRecheckResult({ matched: data.matched, unmatched: data.unmatched }); fetchContract() }
-    } finally { setRecheckingAll(false) }
-  }
-
   // ── Download CSV ────────────────────────────────────────────────────────────
   async function downloadCsv() {
-    if (!contract) return
-    const res = await fetch(`/api/price-contracts/${id}/download-csv`, { headers: { Authorization: `Bearer ${token}` } })
-    if (!res.ok) return
-    const blob = await res.blob()
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = `${contract.name.replace(/[^a-z0-9-_]/gi, '-')}.csv`; a.click()
+    if (!contract || !id) return
+    try {
+      const blob = await priceContractsApi.downloadCsv(id)
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = `${contract.name.replace(/[^a-z0-9-_]/gi, '-')}.csv`
+      a.click()
+    } catch {
+      /* ignore */
+    }
   }
 
   async function deleteContract() {
-    if (!contract || !window.confirm(`Delete "${contract.name}"?`)) return
-    await fetch(`/api/price-contracts/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
-    navigate('/contracts', { replace: true })
+    if (!contract || !id || !window.confirm(`Archive "${contract.name}"?`)) return
+    try {
+      await priceContractsApi.archive(id)
+      navigate('/contracts', { replace: true })
+    } catch {
+      /* ignore */
+    }
   }
 
   if (loading) return <div className="text-gray-400">Loading…</div>
@@ -445,13 +437,6 @@ export default function ContractDetail() {
           </div>
         </div>
         <div className="flex shrink-0 gap-2">
-          <button
-            type="button" onClick={recheckAll} disabled={recheckingAll || productItems.length === 0}
-            className="btn-secondary py-1.5 px-4 text-sm disabled:opacity-40"
-            title="Re-run master catalog lookup for all items"
-          >
-            {recheckingAll ? '⟳ Checking…' : '⟳ Recheck All'}
-          </button>
           <button type="button" onClick={downloadCsv} className="btn-primary py-1.5 px-4 text-sm">Download CSV</button>
           {contract.quoteCore && (
             <button
@@ -464,17 +449,9 @@ export default function ContractDetail() {
               {downloadingFamily ? 'Downloading…' : 'Download quote family (ZIP)'}
             </button>
           )}
-          <button type="button" onClick={deleteContract} className="btn-secondary py-1.5 px-4 text-sm text-red-500">Delete</button>
+          <button type="button" onClick={deleteContract} className="btn-secondary py-1.5 px-4 text-sm text-red-500">Archive</button>
         </div>
       </div>
-
-      {/* ── Recheck result toast ── */}
-      {recheckResult && (
-        <div className="mt-3 flex items-center justify-between rounded-lg bg-blue-50 px-4 py-2 text-sm text-blue-800">
-          <span>Recheck complete — <strong>{recheckResult.matched}</strong> matched, <strong>{recheckResult.unmatched}</strong> not found in catalog</span>
-          <button onClick={() => setRecheckResult(null)} className="ml-4 text-blue-500 hover:text-blue-700">✕</button>
-        </div>
-      )}
 
       {/* ── Catalog validation summary ── */}
       {productItems.length > 0 && (
@@ -487,7 +464,7 @@ export default function ContractDetail() {
                 <p className="mt-0.5">
                   None of the {notInCatalogCount} parts in this contract were found in the master catalog.
                   {' '}<a href="/catalog" className="underline font-medium">Upload your master catalog CSV</a> first,
-                  then click <strong>Recheck All</strong> to match parts automatically.
+                  then edit part numbers and use <strong>Recheck</strong> on each row to match parts.
                 </p>
               </div>
             </div>

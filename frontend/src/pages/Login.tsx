@@ -29,7 +29,7 @@ export default function Login() {
     setError('')
     setGuestLoading(true)
     try {
-      await loginAsGuest()
+      loginAsGuest()
       navigate('/', { replace: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Guest login failed')

@@ -3,22 +3,23 @@ import { useAuth } from './lib/auth'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Register from './pages/Register'
+import Home from './pages/Home'
 import Contracts from './pages/Contracts'
 import ContractCreate from './pages/ContractCreate'
 import ContractDetail from './pages/ContractDetail'
-import CatalogUpload from './pages/CatalogUpload'
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
+function RequireSession({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
   if (loading) return <div className="flex min-h-screen items-center justify-center">Loading…</div>
   if (!user) return <Navigate to="/login" replace />
   return <>{children}</>
 }
 
-function AdminOrRsmRoute({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth()
-  const allowed = user?.role === 'ADMIN' || user?.role === 'RSM'
-  if (!allowed) return <Navigate to="/" replace />
+/** Pricing contracts require a real login (server save). Guests are sent to login. */
+function RequireLogin({ children }: { children: React.ReactNode }) {
+  const { user, isGuest, loading } = useAuth()
+  if (loading) return <div className="flex min-h-screen items-center justify-center">Loading…</div>
+  if (!user || isGuest) return <Navigate to="/login" replace state={{ from: 'contracts' }} />
   return <>{children}</>
 }
 
@@ -30,21 +31,34 @@ export default function App() {
       <Route
         path="/"
         element={
-          <ProtectedRoute>
+          <RequireSession>
             <Layout />
-          </ProtectedRoute>
+          </RequireSession>
         }
       >
-        <Route index element={<Contracts />} />
-        <Route path="contracts" element={<Contracts />} />
-        <Route path="contracts/new" element={<ContractCreate />} />
-        <Route path="contracts/:id" element={<ContractDetail />} />
+        <Route index element={<Home />} />
         <Route
-          path="catalog"
+          path="contracts"
           element={
-            <AdminOrRsmRoute>
-              <CatalogUpload />
-            </AdminOrRsmRoute>
+            <RequireLogin>
+              <Contracts />
+            </RequireLogin>
+          }
+        />
+        <Route
+          path="contracts/new"
+          element={
+            <RequireLogin>
+              <ContractCreate />
+            </RequireLogin>
+          }
+        />
+        <Route
+          path="contracts/:id"
+          element={
+            <RequireLogin>
+              <ContractDetail />
+            </RequireLogin>
           }
         />
       </Route>

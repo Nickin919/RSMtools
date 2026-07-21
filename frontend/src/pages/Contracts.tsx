@@ -1,29 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
-
-const TOKEN_KEY = 'rsm-tools-token'
-
-interface Contract {
-  id: string
-  name: string
-  description: string | null
-  quoteNumber: string | null
-  quoteCore?: string | null
-  quoteYear?: number | null
-  quoteRevision?: string | null
-  validFrom: string | null
-  validTo: string | null
-  createdAt: string
-  _count?: { items: number }
-}
-
-interface QuoteGroup {
-  quoteCore: string
-  quoteYear: number | null
-  label: string
-  contracts: Contract[]
-}
+import { priceContractsApi, type PriceContract, type QuoteGroup } from '../lib/priceContractsApi'
 
 interface BatchResult {
   filename: string
@@ -61,40 +39,40 @@ export default function Contracts() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const [listView, setListView] = useState<'by-name' | 'by-quote'>('by-name')
-  const [contracts, setContracts] = useState<Contract[]>([])
+  const [contracts, setContracts] = useState<PriceContract[]>([])
   const [quoteGroups, setQuoteGroups] = useState<QuoteGroup[]>([])
-  const [ungrouped, setUngrouped] = useState<Contract[]>([])
+  const [ungrouped, setUngrouped] = useState<PriceContract[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  // batch-upload state
   const [dragActive, setDragActive] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadResults, setUploadResults] = useState<BatchResult[] | null>(null)
   const [uploadError, setUploadError] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
 
-  const token = localStorage.getItem(TOKEN_KEY)
-
   const fetchContracts = useCallback((view: 'by-name' | 'by-quote' = listView) => {
     setLoading(true)
-    const q = view === 'by-quote' ? '?view=by-quote' : ''
-    fetch(`/api/price-contracts${q}`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.ok ? r.json() : Promise.reject())
-      .then(data => {
-        if (data.view === 'by-quote') {
+    priceContractsApi
+      .list(view)
+      .then((data) => {
+        if (data && typeof data === 'object' && 'view' in data && data.view === 'by-quote') {
           setQuoteGroups(data.groups ?? [])
           setUngrouped(data.ungrouped ?? [])
           setContracts([])
+        } else if (Array.isArray(data)) {
+          setContracts(data)
+          setQuoteGroups([])
+          setUngrouped([])
         } else {
-          setContracts(Array.isArray(data) ? data : data.contracts ?? [])
+          setContracts((data as { contracts?: PriceContract[] }).contracts ?? [])
           setQuoteGroups([])
           setUngrouped([])
         }
       })
       .catch(() => setError('Could not load contracts.'))
       .finally(() => setLoading(false))
-  }, [token, listView])
+  }, [listView])
 
   useEffect(() => { fetchContracts(listView) }, [listView, fetchContracts])
 
@@ -103,18 +81,9 @@ export default function Contracts() {
     if (pdfs.length === 0) { setUploadError('Please select PDF files only.'); return }
 
     setUploading(true); setUploadError(''); setUploadResults(null)
-    const formData = new FormData()
-    pdfs.forEach(f => formData.append('pdf', f))
-
     try {
-      const res = await fetch('/api/price-contracts/batch-upload', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.message || 'Upload failed')
-      setUploadResults(data.results ?? [])
+      const results = await priceContractsApi.batchUploadPdfs(pdfs)
+      setUploadResults(results)
       fetchContracts()
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Upload failed')
@@ -131,25 +100,22 @@ export default function Contracts() {
   }
 
   async function downloadCsv(contractId: string, name: string) {
-    const res = await fetch(`/api/price-contracts/${contractId}/download-csv`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    if (!res.ok) return
-    const blob = await res.blob()
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${(name || contractId).replace(/[^a-z0-9-_]/gi, '-')}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
+    try {
+      const blob = await priceContractsApi.downloadCsv(contractId)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${(name || contractId).replace(/[^a-z0-9-_]/gi, '-')}.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      /* ignore */
+    }
   }
 
-  async function deleteContract(id: string, name: string) {
-    if (!window.confirm(`Delete "${name}"? This cannot be undone.`)) return
-    await fetch(`/api/price-contracts/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    })
+  async function archiveContract(id: string, name: string) {
+    if (!window.confirm(`Archive "${name}"?`)) return
+    await priceContractsApi.archive(id)
     fetchContracts()
   }
 
@@ -372,7 +338,7 @@ export default function Contracts() {
                         <div className="ml-4 flex shrink-0 items-center gap-2">
                           <button type="button" onClick={() => downloadCsv(c.id, c.name)} className="btn-secondary py-1 px-3 text-xs">CSV ↓</button>
                           <Link to={`/contracts/${c.id}`} className="btn-secondary py-1 px-3 text-xs">View</Link>
-                          <button type="button" onClick={() => deleteContract(c.id, c.name)} className="py-1 px-2 text-xs text-red-400 hover:text-red-600">✕</button>
+                          <button type="button" onClick={() => archiveContract(c.id, c.name)} className="py-1 px-2 text-xs text-red-400 hover:text-red-600">✕</button>
                         </div>
                       </li>
                     ))}
@@ -404,7 +370,7 @@ export default function Contracts() {
                         <div className="ml-4 flex shrink-0 items-center gap-2">
                           <button type="button" onClick={() => downloadCsv(c.id, c.name)} className="btn-secondary py-1 px-3 text-xs">CSV ↓</button>
                           <Link to={`/contracts/${c.id}`} className="btn-secondary py-1 px-3 text-xs">View</Link>
-                          <button type="button" onClick={() => deleteContract(c.id, c.name)} className="py-1 px-2 text-xs text-red-400 hover:text-red-600">✕</button>
+                          <button type="button" onClick={() => archiveContract(c.id, c.name)} className="py-1 px-2 text-xs text-red-400 hover:text-red-600">✕</button>
                         </div>
                       </li>
                     ))}
@@ -443,7 +409,7 @@ export default function Contracts() {
                   <Link to={`/contracts/${c.id}`} className="btn-secondary py-1 px-3 text-xs">
                     View
                   </Link>
-                  <button type="button" onClick={() => deleteContract(c.id, c.name)} className="py-1 px-2 text-xs text-red-400 hover:text-red-600">
+                  <button type="button" onClick={() => archiveContract(c.id, c.name)} className="py-1 px-2 text-xs text-red-400 hover:text-red-600">
                     ✕
                   </button>
                 </div>

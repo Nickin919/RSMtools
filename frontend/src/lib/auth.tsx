@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
+import { api, getToken, setToken, clearToken, CLIENT_APP } from './api'
 
 export type UserRole =
   | 'FREE'
@@ -17,100 +18,89 @@ export interface User {
   firstName: string | null
   lastName: string | null
   role: UserRole
-}
-
-const TOKEN_KEY = 'rsm-tools-token'
-
-function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY)
-}
-
-function setToken(token: string) {
-  localStorage.setItem(TOKEN_KEY, token)
-}
-
-function clearToken() {
-  localStorage.removeItem(TOKEN_KEY)
+  appSource?: string
 }
 
 const AuthContext = createContext<{
   user: User | null
   token: string | null
   loading: boolean
+  /** True when continuing without an account — no server saves */
+  isGuest: boolean
   login: (email: string, password: string) => Promise<void>
-  register: (data: { email?: string; password?: string; firstName?: string; lastName?: string }) => Promise<void>
-  loginAsGuest: () => Promise<void>
+  register: (data: { email: string; password: string; firstName?: string; lastName?: string }) => Promise<void>
+  loginAsGuest: () => void
   logout: () => void
 } | null>(null)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
+  const [isGuest, setIsGuest] = useState(false)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    const guestFlag = sessionStorage.getItem('rsm-tools-guest')
+    if (guestFlag === '1') {
+      setUser({ id: 'guest', email: null, firstName: null, lastName: null, role: 'FREE' })
+      setIsGuest(true)
+      setLoading(false)
+      return
+    }
+
     const token = getToken()
     if (!token) {
       setLoading(false)
       return
     }
-    fetch('/api/auth/me', {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((data) => setUser(data.user ?? data))
+    api<{ user?: User } & User>('/auth/me')
+      .then((data) => {
+        const u = (data as { user?: User }).user ?? (data as User)
+        setUser(u)
+        setIsGuest(false)
+      })
       .catch(() => clearToken())
       .finally(() => setLoading(false))
   }, [])
 
   const login = async (email: string, password: string) => {
-    const res = await fetch('/api/auth/login', {
+    const data = await api<{ user: User; token: string }>('/auth/login', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
+      json: { email, password, clientApp: CLIENT_APP },
     })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}))
-      throw new Error(err.message || 'Login failed')
-    }
-    const data = await res.json()
+    sessionStorage.removeItem('rsm-tools-guest')
     setToken(data.token)
-    setUser(data.user ?? data)
+    setUser(data.user)
+    setIsGuest(false)
   }
 
   const register = async (data: {
-    email?: string
-    password?: string
+    email: string
+    password: string
     firstName?: string
     lastName?: string
   }) => {
-    const res = await fetch('/api/auth/register', {
+    const out = await api<{ user: User; token: string }>('/auth/register', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
+      json: { ...data, clientApp: CLIENT_APP },
     })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}))
-      throw new Error(err.message || 'Registration failed')
-    }
-    const out = await res.json()
+    sessionStorage.removeItem('rsm-tools-guest')
     setToken(out.token)
-    setUser(out.user ?? out)
+    setUser(out.user)
+    setIsGuest(false)
   }
 
-  const loginAsGuest = async () => {
-    const res = await fetch('/api/auth/guest', { method: 'POST' })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}))
-      throw new Error(err.message || 'Guest login failed')
-    }
-    const data = await res.json()
-    setToken(data.token)
-    setUser(data.user ?? data)
+  const loginAsGuest = () => {
+    clearToken()
+    sessionStorage.setItem('rsm-tools-guest', '1')
+    setUser({ id: 'guest', email: null, firstName: null, lastName: null, role: 'FREE' })
+    setIsGuest(true)
   }
 
   const logout = () => {
     clearToken()
+    sessionStorage.removeItem('rsm-tools-guest')
     setUser(null)
+    setIsGuest(false)
   }
 
   return (
@@ -119,6 +109,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         user,
         token: getToken(),
         loading,
+        isGuest,
         login,
         register,
         loginAsGuest,

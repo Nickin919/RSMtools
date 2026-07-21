@@ -8,6 +8,11 @@ COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
 
 COPY . .
+
+# Point the SPA at the shared WAIGO API (override in Railway build args if needed)
+ARG VITE_API_URL=https://api.connectwithwago.com
+ENV VITE_API_URL=$VITE_API_URL
+
 RUN npm run build
 
 # Runtime: Debian-based so native deps (bcrypt) have working prebuilds

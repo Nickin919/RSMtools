@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-
-const TOKEN_KEY = 'rsm-tools-token'
+import { priceContractsApi } from '../lib/priceContractsApi'
 
 export default function ContractCreate() {
   const [name, setName] = useState('')
@@ -15,23 +14,14 @@ export default function ContractCreate() {
     e.preventDefault()
     setError('')
     setLoading(true)
-    const token = localStorage.getItem(TOKEN_KEY)
     try {
-      const res = await fetch('/api/price-contracts', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          name,
-          description: description || undefined,
-          ...(quoteNumber.trim() && { quoteNumber: quoteNumber.trim() }),
-        }),
+      const data = await priceContractsApi.create({
+        name,
+        description: description || undefined,
+        ...(quoteNumber.trim() && { quoteNumber: quoteNumber.trim() }),
       })
-      if (!res.ok) throw new Error('Failed to create contract')
-      const data = await res.json()
-      navigate(`/contracts/${data.contract?.id ?? data.id}`, { replace: true })
+      const contract = (data as { contract?: { id: string } }).contract ?? (data as { id: string })
+      navigate(`/contracts/${contract.id}`, { replace: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
@@ -49,11 +39,10 @@ export default function ContractCreate() {
         )}
         <div>
           <label htmlFor="name" className="block text-sm font-medium text-gray-700">
-            Contract name
+            Name
           </label>
           <input
             id="name"
-            type="text"
             className="input mt-1"
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -62,17 +51,15 @@ export default function ContractCreate() {
         </div>
         <div>
           <label htmlFor="quoteNumber" className="block text-sm font-medium text-gray-700">
-            Quote # (optional)
+            Quote number (optional)
           </label>
           <input
             id="quoteNumber"
-            type="text"
-            placeholder="e.g. T26Q5889 or T26Q5889-A"
-            className="input mt-1 font-mono"
+            className="input mt-1"
             value={quoteNumber}
             onChange={(e) => setQuoteNumber(e.target.value)}
+            placeholder="e.g. T26Q5889-A"
           />
-          <p className="mt-0.5 text-xs text-gray-500">Used to group this contract with related quotes (same core number).</p>
         </div>
         <div>
           <label htmlFor="description" className="block text-sm font-medium text-gray-700">
@@ -80,8 +67,8 @@ export default function ContractCreate() {
           </label>
           <textarea
             id="description"
-            rows={3}
             className="input mt-1"
+            rows={3}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
@@ -90,11 +77,7 @@ export default function ContractCreate() {
           <button type="submit" className="btn-primary" disabled={loading}>
             {loading ? 'Creating…' : 'Create contract'}
           </button>
-          <button
-            type="button"
-            onClick={() => navigate('/contracts')}
-            className="btn-secondary"
-          >
+          <button type="button" className="btn-secondary" onClick={() => navigate('/contracts')}>
             Cancel
           </button>
         </div>
