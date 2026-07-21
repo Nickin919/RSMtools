@@ -15,14 +15,6 @@ function RequireSession({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
-/** Pricing contracts require a real login (server save). Guests are sent to login. */
-function RequireLogin({ children }: { children: React.ReactNode }) {
-  const { user, isGuest, loading } = useAuth()
-  if (loading) return <div className="flex min-h-screen items-center justify-center">Loading…</div>
-  if (!user || isGuest) return <Navigate to="/login" replace state={{ from: 'contracts' }} />
-  return <>{children}</>
-}
-
 export default function App() {
   return (
     <Routes>
@@ -37,30 +29,9 @@ export default function App() {
         }
       >
         <Route index element={<Home />} />
-        <Route
-          path="contracts"
-          element={
-            <RequireLogin>
-              <Contracts />
-            </RequireLogin>
-          }
-        />
-        <Route
-          path="contracts/new"
-          element={
-            <RequireLogin>
-              <ContractCreate />
-            </RequireLogin>
-          }
-        />
-        <Route
-          path="contracts/:id"
-          element={
-            <RequireLogin>
-              <ContractDetail />
-            </RequireLogin>
-          }
-        />
+        <Route path="contracts" element={<Contracts />} />
+        <Route path="contracts/new" element={<ContractCreate />} />
+        <Route path="contracts/:id" element={<ContractDetail />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

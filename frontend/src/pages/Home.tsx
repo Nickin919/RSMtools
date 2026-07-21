@@ -4,9 +4,9 @@ import { useAuth } from '../lib/auth'
 const tools = [
   {
     title: 'Pricing contracts',
-    description: 'Import WAGO quote PDFs, manage families, and save contracts to your account.',
+    description: 'Import WAGO quote PDFs, edit line items, and export CSV. Sign in only if you want to save.',
     to: '/contracts',
-    requiresLogin: true,
+    requiresLogin: false,
     available: true,
   },
   {
@@ -59,14 +59,14 @@ export default function Home() {
               {!tool.available && (
                 <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Coming soon</p>
               )}
-              {tool.available && tool.requiresLogin && isGuest && (
-                <p className="mt-3 text-xs text-amber-700">Sign in required to save</p>
+              {tool.available && isGuest && tool.title === 'Pricing contracts' && (
+                <p className="mt-3 text-xs text-amber-700">Works without login — sign in only to save</p>
               )}
             </div>
           )
           if (!tool.available) return <div key={tool.title}>{inner}</div>
           return (
-            <Link key={tool.title} to={tool.requiresLogin && isGuest ? '/login' : tool.to}>
+            <Link key={tool.title} to={tool.to}>
               {inner}
             </Link>
           )

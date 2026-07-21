@@ -2,6 +2,14 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { priceContractsApi, type PriceContract, type QuoteGroup } from '../lib/priceContractsApi'
+import {
+  listGuestContracts,
+  createGuestContract,
+  removeGuestContract,
+  rowsToGuestItems,
+  guestContractToCsv,
+  getGuestContract,
+} from '../lib/guestContracts'
 
 interface BatchResult {
   filename: string
@@ -36,7 +44,7 @@ function IconDownload() {
 }
 
 export default function Contracts() {
-  const { user } = useAuth()
+  const { user, isGuest } = useAuth()
   const navigate = useNavigate()
   const [listView, setListView] = useState<'by-name' | 'by-quote'>('by-name')
   const [contracts, setContracts] = useState<PriceContract[]>([])
@@ -53,6 +61,15 @@ export default function Contracts() {
 
   const fetchContracts = useCallback((view: 'by-name' | 'by-quote' = listView) => {
     setLoading(true)
+    setError('')
+    if (isGuest) {
+      const local = listGuestContracts() as unknown as PriceContract[]
+      setContracts(local)
+      setQuoteGroups([])
+      setUngrouped([])
+      setLoading(false)
+      return
+    }
     priceContractsApi
       .list(view)
       .then((data) => {
@@ -72,7 +89,7 @@ export default function Contracts() {
       })
       .catch(() => setError('Could not load contracts.'))
       .finally(() => setLoading(false))
-  }, [listView])
+  }, [listView, isGuest])
 
   useEffect(() => { fetchContracts(listView) }, [listView, fetchContracts])
 
@@ -82,9 +99,42 @@ export default function Contracts() {
 
     setUploading(true); setUploadError(''); setUploadResults(null)
     try {
-      const results = await priceContractsApi.batchUploadPdfs(pdfs)
-      setUploadResults(results)
-      fetchContracts()
+      if (isGuest) {
+        const results: BatchResult[] = []
+        for (const file of pdfs) {
+          try {
+            const parsed = await priceContractsApi.parsePdfPublic(file)
+            const items = rowsToGuestItems(parsed.rows)
+            const contract = createGuestContract({
+              name: parsed.suggestedName,
+              quoteNumber: parsed.metadata?.quoteNumber,
+              items,
+            })
+            results.push({
+              filename: file.name,
+              contractId: contract.id,
+              contractName: contract.name,
+              imported: items.length,
+              skipped: 0,
+            })
+          } catch (e) {
+            results.push({
+              filename: file.name,
+              contractId: '',
+              contractName: file.name.replace(/\.pdf$/i, ''),
+              imported: 0,
+              skipped: 0,
+              error: e instanceof Error ? e.message : 'Parse failed',
+            })
+          }
+        }
+        setUploadResults(results)
+        fetchContracts()
+      } else {
+        const results = await priceContractsApi.batchUploadPdfs(pdfs)
+        setUploadResults(results)
+        fetchContracts()
+      }
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Upload failed')
     } finally {
@@ -101,7 +151,14 @@ export default function Contracts() {
 
   async function downloadCsv(contractId: string, name: string) {
     try {
-      const blob = await priceContractsApi.downloadCsv(contractId)
+      let blob: Blob
+      if (isGuest || contractId.startsWith('guest-')) {
+        const c = getGuestContract(contractId)
+        if (!c) return
+        blob = new Blob([guestContractToCsv(c)], { type: 'text/csv;charset=utf-8' })
+      } else {
+        blob = await priceContractsApi.downloadCsv(contractId)
+      }
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -114,8 +171,12 @@ export default function Contracts() {
   }
 
   async function archiveContract(id: string, name: string) {
-    if (!window.confirm(`Archive "${name}"?`)) return
-    await priceContractsApi.archive(id)
+    if (!window.confirm(isGuest ? `Remove "${name}" from this session?` : `Archive "${name}"?`)) return
+    if (isGuest || id.startsWith('guest-')) {
+      removeGuestContract(id)
+    } else {
+      await priceContractsApi.archive(id)
+    }
     fetchContracts()
   }
 
@@ -132,8 +193,23 @@ export default function Contracts() {
           Pricing contracts
         </h1>
         <p className="mt-1 text-gray-600">
-          Welcome back{user?.firstName ? `, ${user.firstName}` : ''}. Create and manage WAGO pricing contracts from quote PDFs.
+          {isGuest
+            ? 'Use the tool without an account. Contracts stay in this browser session until you sign in to save them.'
+            : `Welcome back${user?.firstName ? `, ${user.firstName}` : ''}. Create and manage WAGO pricing contracts from quote PDFs.`}
         </p>
+        {isGuest && (
+          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            Guest mode — nothing is saved on the server.{' '}
+            <Link to="/login" className="font-medium underline">
+              Sign in
+            </Link>{' '}
+            or{' '}
+            <Link to="/register" className="font-medium underline">
+              register
+            </Link>{' '}
+            to keep your contracts.
+          </div>
+        )}
 
         <div className="mt-6 grid gap-4 sm:grid-cols-3">
           <div className="card flex items-center gap-4 p-4">

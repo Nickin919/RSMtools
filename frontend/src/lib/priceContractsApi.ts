@@ -78,6 +78,26 @@ export const priceContractsApi = {
 
   downloadQuoteFamily: (id: string) => apiBlob(`/price-contracts/${id}/download-quote-family`),
 
+  /** Public parse — no auth, no save (for guests). */
+  parsePdfPublic: async (file: File) => {
+    const fd = new FormData()
+    fd.append('pdf', file)
+    return api<{
+      success: boolean
+      suggestedName: string
+      metadata: { quoteNumber?: string; quoteDate?: string; expirationDate?: string }
+      rows: Array<{
+        partNumber: string
+        series: string
+        description: string
+        price: string
+        discount: string
+        moq: string
+        netPrice: string
+      }>
+    }>('/public/price-contracts/parse-pdf', { method: 'POST', formData: fd })
+  },
+
   /** WAIGO has no batch-upload — create one contract per PDF then upload. */
   batchUploadPdfs: async (files: File[]) => {
     const results: Array<{

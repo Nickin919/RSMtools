@@ -1,6 +1,15 @@
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useEffect, useState, useRef } from 'react'
 import { priceContractsApi } from '../lib/priceContractsApi'
+import { useAuth } from '../lib/auth'
+import {
+  getGuestContract,
+  updateGuestContract,
+  removeGuestContract,
+  rowsToGuestItems,
+  guestContractToCsv,
+  type GuestContract,
+} from '../lib/guestContracts'
 
 interface Part {
   id: string
@@ -51,6 +60,8 @@ function pctOff(listPrice: number, costPrice: number): number | null {
 export default function ContractDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { isGuest } = useAuth()
+  const isLocal = isGuest || !!id?.startsWith('guest-')
 
   const [contract, setContract] = useState<Contract | null>(null)
   const [loading, setLoading] = useState(true)
@@ -91,8 +102,26 @@ export default function ContractDetail() {
   const [savingQuoteNumber, setSavingQuoteNumber] = useState(false)
   const [downloadingFamily, setDownloadingFamily] = useState(false)
 
+  function applyGuestToState(updated: GuestContract | null) {
+    if (!updated) return
+    const c = updated as unknown as Contract
+    setContract(c)
+    const productIds = new Set((c.items ?? []).filter(i => i.partNumber).map(i => i.id))
+    setSelectedIds(productIds)
+  }
+
   function fetchContract() {
     if (!id) return
+    if (isLocal) {
+      const c = getGuestContract(id)
+      if (c) {
+        applyGuestToState(c)
+      } else {
+        setContract(null)
+      }
+      setLoading(false)
+      return
+    }
     priceContractsApi.get(id)
       .then(data => {
         const c = (data?.contract ?? data) as Contract
@@ -104,7 +133,7 @@ export default function ContractDetail() {
       .catch(() => setContract(null))
       .finally(() => setLoading(false))
   }
-  useEffect(() => { fetchContract() }, [id])
+  useEffect(() => { fetchContract() }, [id, isLocal])
 
   // ── PDF upload ──────────────────────────────────────────────────────────────
   async function uploadPDFs(files: FileList | File[]) {
@@ -113,12 +142,26 @@ export default function ContractDetail() {
     setUploading(true); setUploadMsg('')
     try {
       let totalImported = 0
-      for (const file of pdfs) {
-        const data = await priceContractsApi.uploadPdf(id, file) as { imported?: number; totalImported?: number }
-        totalImported += data?.imported ?? data?.totalImported ?? 0
+      if (isLocal) {
+        const existing = getGuestContract(id)
+        if (!existing) throw new Error('Contract not found')
+        let items = [...(existing.items ?? [])]
+        for (const file of pdfs) {
+          const parsed = await priceContractsApi.parsePdfPublic(file)
+          const newItems = rowsToGuestItems(parsed.rows)
+          items = [...items, ...newItems]
+          totalImported += newItems.length
+        }
+        const updated = updateGuestContract(id, { items })
+        applyGuestToState(updated)
+      } else {
+        for (const file of pdfs) {
+          const data = await priceContractsApi.uploadPdf(id, file) as { imported?: number; totalImported?: number }
+          totalImported += data?.imported ?? data?.totalImported ?? 0
+        }
+        fetchContract()
       }
       setUploadMsg(`✓ ${totalImported} items added`)
-      fetchContract()
     } catch (e) {
       setUploadMsg(e instanceof Error ? e.message : 'Upload failed')
     } finally {
@@ -137,14 +180,27 @@ export default function ContractDetail() {
     if (isNaN(costPrice) || costPrice < 0) { alert('Enter a valid cost price'); return }
     setRecheckingId(item.id)
     try {
-      const data = await priceContractsApi.updateItem(id, item.id, { partNumber, costPrice }) as { item?: Item }
-      const updated = data?.item
-      if (updated) {
-        setContract(prev => prev ? { ...prev, items: prev.items.map(i => i.id === item.id ? updated : i) } : null)
-        setEdits(prev => { const n = { ...prev }; delete n[item.id]; return n })
+      if (isLocal) {
+        const existing = getGuestContract(id)
+        if (!existing) return
+        const items = existing.items.map(i =>
+          i.id === item.id ? { ...i, partNumber, costPrice } : i
+        )
+        const updated = updateGuestContract(id, { items })
+        if (updated) {
+          setContract(updated as unknown as Contract)
+          setEdits(prev => { const n = { ...prev }; delete n[item.id]; return n })
+        }
       } else {
-        fetchContract()
-        setEdits(prev => { const n = { ...prev }; delete n[item.id]; return n })
+        const data = await priceContractsApi.updateItem(id, item.id, { partNumber, costPrice }) as { item?: Item }
+        const updated = data?.item
+        if (updated) {
+          setContract(prev => prev ? { ...prev, items: prev.items.map(i => i.id === item.id ? updated : i) } : null)
+          setEdits(prev => { const n = { ...prev }; delete n[item.id]; return n })
+        } else {
+          fetchContract()
+          setEdits(prev => { const n = { ...prev }; delete n[item.id]; return n })
+        }
       }
     } catch {
       /* ignore */
@@ -157,8 +213,16 @@ export default function ContractDetail() {
     if (!id || !window.confirm('Remove this item?')) return
     setRemovingId(item.id)
     try {
-      await priceContractsApi.removeItem(id, item.id)
-      setContract(prev => prev ? { ...prev, items: prev.items.filter(i => i.id !== item.id) } : null)
+      if (isLocal) {
+        const existing = getGuestContract(id)
+        if (!existing) return
+        const items = existing.items.filter(i => i.id !== item.id)
+        const updated = updateGuestContract(id, { items })
+        if (updated) setContract(updated as unknown as Contract)
+      } else {
+        await priceContractsApi.removeItem(id, item.id)
+        setContract(prev => prev ? { ...prev, items: prev.items.filter(i => i.id !== item.id) } : null)
+      }
     } catch {
       /* ignore */
     } finally {
@@ -188,8 +252,21 @@ export default function ContractDetail() {
     if (isNaN(margin) || margin < 0 || margin >= 100) { alert('Enter a margin between 0 and 99'); return }
     setApplyingMargin(true)
     try {
-      await priceContractsApi.bulkSellPrice(id, { itemIds: ids, marginPercent: margin })
-      fetchContract()
+      if (isLocal) {
+        const existing = getGuestContract(id)
+        if (!existing) return
+        const idSet = new Set(ids)
+        const items = existing.items.map(i => {
+          if (!idSet.has(i.id)) return i
+          const suggestedSellPrice = Math.round((i.costPrice / (1 - margin / 100)) * 100) / 100
+          return { ...i, suggestedSellPrice }
+        })
+        const updated = updateGuestContract(id, { items })
+        if (updated) setContract(updated as unknown as Contract)
+      } else {
+        await priceContractsApi.bulkSellPrice(id, { itemIds: ids, marginPercent: margin })
+        fetchContract()
+      }
     } catch {
       /* ignore */
     } finally {
@@ -204,9 +281,21 @@ export default function ContractDetail() {
     if (isNaN(price) || price < 0) { alert('Enter a valid price (e.g. 20 or 20.00)'); return }
     setApplyingFixed(true)
     try {
-      await priceContractsApi.bulkSellPrice(id, { itemIds: ids, suggestedSellPrice: price })
-      fetchContract()
-      setFixedSellPrice('')
+      if (isLocal) {
+        const existing = getGuestContract(id)
+        if (!existing) return
+        const idSet = new Set(ids)
+        const items = existing.items.map(i =>
+          idSet.has(i.id) ? { ...i, suggestedSellPrice: price } : i
+        )
+        const updated = updateGuestContract(id, { items })
+        if (updated) setContract(updated as unknown as Contract)
+        setFixedSellPrice('')
+      } else {
+        await priceContractsApi.bulkSellPrice(id, { itemIds: ids, suggestedSellPrice: price })
+        fetchContract()
+        setFixedSellPrice('')
+      }
     } catch {
       /* ignore */
     } finally {
@@ -221,9 +310,19 @@ export default function ContractDetail() {
     setSavingSellPriceId(itemId)
     setSellPriceEdit(null)
     try {
-      const data = await priceContractsApi.updateItem(id, itemId, { suggestedSellPrice: price }) as { item?: Item }
-      if (data?.item) {
-        setContract(prev => prev ? { ...prev, items: prev.items.map(i => i.id === itemId ? data.item! : i) } : null)
+      if (isLocal) {
+        const existing = getGuestContract(id)
+        if (!existing) return
+        const items = existing.items.map(i =>
+          i.id === itemId ? { ...i, suggestedSellPrice: price } : i
+        )
+        const updated = updateGuestContract(id, { items })
+        if (updated) setContract(updated as unknown as Contract)
+      } else {
+        const data = await priceContractsApi.updateItem(id, itemId, { suggestedSellPrice: price }) as { item?: Item }
+        if (data?.item) {
+          setContract(prev => prev ? { ...prev, items: prev.items.map(i => i.id === itemId ? data.item! : i) } : null)
+        }
       }
     } catch {
       /* ignore */
@@ -239,9 +338,21 @@ export default function ContractDetail() {
     if (!moqStr) { alert('Enter an MOQ value (e.g. 1 or 5)'); return }
     setApplyingMoq(true)
     try {
-      await priceContractsApi.bulkMoq(id, { itemIds: ids, moq: moqStr })
-      fetchContract()
-      setFixedMoq('')
+      if (isLocal) {
+        const existing = getGuestContract(id)
+        if (!existing) return
+        const idSet = new Set(ids)
+        const items = existing.items.map(i =>
+          idSet.has(i.id) ? { ...i, moq: moqStr } : i
+        )
+        const updated = updateGuestContract(id, { items })
+        if (updated) setContract(updated as unknown as Contract)
+        setFixedMoq('')
+      } else {
+        await priceContractsApi.bulkMoq(id, { itemIds: ids, moq: moqStr })
+        fetchContract()
+        setFixedMoq('')
+      }
     } catch {
       /* ignore */
     } finally {
@@ -256,9 +367,19 @@ export default function ContractDetail() {
     setSavingMoqId(itemId)
     setMoqEdit(null)
     try {
-      const data = await priceContractsApi.updateItem(id, itemId, { moq: moqStr }) as { item?: Item }
-      if (data?.item) {
-        setContract(prev => prev ? { ...prev, items: prev.items.map(i => i.id === itemId ? data.item! : i) } : null)
+      if (isLocal) {
+        const existing = getGuestContract(id)
+        if (!existing) return
+        const items = existing.items.map(i =>
+          i.id === itemId ? { ...i, moq: moqStr } : i
+        )
+        const updated = updateGuestContract(id, { items })
+        if (updated) setContract(updated as unknown as Contract)
+      } else {
+        const data = await priceContractsApi.updateItem(id, itemId, { moq: moqStr }) as { item?: Item }
+        if (data?.item) {
+          setContract(prev => prev ? { ...prev, items: prev.items.map(i => i.id === itemId ? data.item! : i) } : null)
+        }
       }
     } catch {
       /* ignore */
@@ -271,9 +392,17 @@ export default function ContractDetail() {
   async function saveRename() {
     if (!id || !renameValue.trim()) return
     try {
-      await priceContractsApi.update(id, { name: renameValue.trim() })
-      setContract(prev => prev ? { ...prev, name: renameValue.trim() } : null)
-      setEditingName(false)
+      if (isLocal) {
+        const updated = updateGuestContract(id, { name: renameValue.trim() })
+        if (updated) {
+          setContract(updated as unknown as Contract)
+          setEditingName(false)
+        }
+      } else {
+        await priceContractsApi.update(id, { name: renameValue.trim() })
+        setContract(prev => prev ? { ...prev, name: renameValue.trim() } : null)
+        setEditingName(false)
+      }
     } catch {
       /* ignore */
     }
@@ -284,22 +413,30 @@ export default function ContractDetail() {
     if (!id) return
     setSavingQuoteNumber(true)
     try {
-      const data = await priceContractsApi.update(id, { quoteNumber: quoteNumberValue.trim() || undefined }) as {
-        contract?: Partial<Contract>
-      }
-      const c = data?.contract
-      if (c) {
-        setContract(prev => prev ? {
-          ...prev,
-          name: c.name ?? prev.name,
-          quoteNumber: c.quoteNumber ?? null,
-          quoteCore: c.quoteCore ?? null,
-          quoteYear: c.quoteYear ?? null,
-        } : null)
-        setEditingQuoteNumber(false)
+      if (isLocal) {
+        const updated = updateGuestContract(id, { quoteNumber: quoteNumberValue.trim() || null })
+        if (updated) {
+          setContract(updated as unknown as Contract)
+          setEditingQuoteNumber(false)
+        }
       } else {
-        setContract(prev => prev ? { ...prev, quoteNumber: quoteNumberValue.trim() || null } : null)
-        setEditingQuoteNumber(false)
+        const data = await priceContractsApi.update(id, { quoteNumber: quoteNumberValue.trim() || undefined }) as {
+          contract?: Partial<Contract>
+        }
+        const c = data?.contract
+        if (c) {
+          setContract(prev => prev ? {
+            ...prev,
+            name: c.name ?? prev.name,
+            quoteNumber: c.quoteNumber ?? null,
+            quoteCore: c.quoteCore ?? null,
+            quoteYear: c.quoteYear ?? null,
+          } : null)
+          setEditingQuoteNumber(false)
+        } else {
+          setContract(prev => prev ? { ...prev, quoteNumber: quoteNumberValue.trim() || null } : null)
+          setEditingQuoteNumber(false)
+        }
       }
     } catch {
       /* ignore */
@@ -310,7 +447,7 @@ export default function ContractDetail() {
 
   // ── Download quote family ZIP ───────────────────────────────────────────────
   async function downloadQuoteFamilyZip() {
-    if (!id || !contract?.quoteCore) return
+    if (!id || !contract?.quoteCore || isLocal) return
     setDownloadingFamily(true)
     try {
       const blob = await priceContractsApi.downloadQuoteFamily(id)
@@ -332,7 +469,14 @@ export default function ContractDetail() {
   async function downloadCsv() {
     if (!contract || !id) return
     try {
-      const blob = await priceContractsApi.downloadCsv(id)
+      let blob: Blob
+      if (isLocal) {
+        const c = getGuestContract(id)
+        if (!c) return
+        blob = new Blob([guestContractToCsv(c)], { type: 'text/csv;charset=utf-8' })
+      } else {
+        blob = await priceContractsApi.downloadCsv(id)
+      }
       const a = document.createElement('a')
       a.href = URL.createObjectURL(blob)
       a.download = `${contract.name.replace(/[^a-z0-9-_]/gi, '-')}.csv`
@@ -343,9 +487,17 @@ export default function ContractDetail() {
   }
 
   async function deleteContract() {
-    if (!contract || !id || !window.confirm(`Archive "${contract.name}"?`)) return
+    if (!contract || !id) return
+    const confirmMsg = isLocal
+      ? `Remove "${contract.name}" from this session?`
+      : `Archive "${contract.name}"?`
+    if (!window.confirm(confirmMsg)) return
     try {
-      await priceContractsApi.archive(id)
+      if (isLocal) {
+        removeGuestContract(id)
+      } else {
+        await priceContractsApi.archive(id)
+      }
       navigate('/contracts', { replace: true })
     } catch {
       /* ignore */
@@ -368,6 +520,14 @@ export default function ContractDetail() {
 
   return (
     <div className="pb-10">
+      {isLocal && (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+          Guest session — not saved on server.{' '}
+          <Link to="/login" className="font-medium underline hover:text-amber-900">Sign in</Link>
+          {' '}to keep this contract.
+        </div>
+      )}
+
       {/* ── Header ── */}
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -438,7 +598,7 @@ export default function ContractDetail() {
         </div>
         <div className="flex shrink-0 gap-2">
           <button type="button" onClick={downloadCsv} className="btn-primary py-1.5 px-4 text-sm">Download CSV</button>
-          {contract.quoteCore && (
+          {!isLocal && contract.quoteCore && (
             <button
               type="button"
               onClick={downloadQuoteFamilyZip}
