@@ -9,6 +9,9 @@ import ContractCreate from './pages/ContractCreate'
 import ContractDetail from './pages/ContractDetail'
 import ProductFinder from './features/product-finder/ProductFinder'
 import IoSystemConfigurator from './features/io-configurator/IoSystemConfigurator'
+import LiteratureBrowse from './features/literature/LiteratureBrowse'
+import LiteratureKits from './features/literature/LiteratureKits'
+import LiteratureKitDetail from './features/literature/LiteratureKitDetail'
 
 function RequireSession({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -36,6 +39,9 @@ export default function App() {
         <Route path="contracts/:id" element={<ContractDetail />} />
         <Route path="product-finder" element={<ProductFinder />} />
         <Route path="io-system-configurator" element={<IoSystemConfigurator />} />
+        <Route path="literature" element={<LiteratureBrowse />} />
+        <Route path="literature/kits" element={<LiteratureKits />} />
+        <Route path="literature/kits/:id" element={<LiteratureKitDetail />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

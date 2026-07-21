@@ -25,10 +25,10 @@ const tools = [
   },
   {
     title: 'Literature library',
-    description: 'Browse literature and email kits (coming next).',
-    to: '#',
+    description: 'Browse WAGO literature, download ZIP, and email kits. Sign in to save kits.',
+    to: '/literature',
     requiresLogin: false,
-    available: false,
+    available: true,
   },
 ]
 
