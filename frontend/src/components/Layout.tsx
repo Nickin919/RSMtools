@@ -26,6 +26,7 @@ export default function Layout() {
     { to: '/', label: 'Home' },
     { to: '/contracts', label: 'Pricing contracts' },
     { to: '/product-finder', label: 'Product Finder' },
+    { to: '/io-system-configurator', label: '750 I/O Configurator' },
   ]
 
   return (

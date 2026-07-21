@@ -26,15 +26,26 @@ export function clearToken() {
 
 export { TOKEN_KEY, CLIENT_APP }
 
-type ApiOptions = RequestInit & { json?: unknown; formData?: FormData }
+type ApiOptions = RequestInit & { json?: unknown; formData?: FormData; params?: Record<string, string | number | undefined> }
 
 export async function api<T = unknown>(path: string, options: ApiOptions = {}): Promise<T> {
-  const { json, formData, headers: initHeaders, ...rest } = options
+  const { json, formData, params, headers: initHeaders, ...rest } = options
   const headers = new Headers(initHeaders)
   headers.set('X-Client-App', CLIENT_APP)
 
   const token = getToken()
   if (token) headers.set('Authorization', `Bearer ${token}`)
+
+  let urlPath = path.startsWith('/') ? path : `/${path}`
+  if (params) {
+    const qs = new URLSearchParams()
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === '') continue
+      qs.set(k, String(v))
+    }
+    const s = qs.toString()
+    if (s) urlPath += `?${s}`
+  }
 
   let body: BodyInit | undefined = rest.body as BodyInit | undefined
   if (formData) {
@@ -44,7 +55,7 @@ export async function api<T = unknown>(path: string, options: ApiOptions = {}): 
     body = JSON.stringify(json)
   }
 
-  const res = await fetch(`${getApiBase()}${path.startsWith('/') ? path : `/${path}`}`, {
+  const res = await fetch(`${getApiBase()}${urlPath}`, {
     ...rest,
     headers,
     body,
@@ -56,10 +67,11 @@ export async function api<T = unknown>(path: string, options: ApiOptions = {}): 
       (errBody as { error?: string; message?: string }).error ||
       (errBody as { message?: string }).message ||
       `Request failed (${res.status})`
-    const err = new Error(message) as Error & { status?: number; code?: string; body?: unknown }
+    const err = new Error(message) as Error & { status?: number; code?: string; body?: unknown; response?: { data?: unknown; status?: number } }
     err.status = res.status
     err.code = (errBody as { code?: string }).code
     err.body = errBody
+    err.response = { data: errBody, status: res.status }
     throw err
   }
 
@@ -76,5 +88,27 @@ export async function apiBlob(path: string): Promise<Blob> {
   if (token) headers.set('Authorization', `Bearer ${token}`)
   const res = await fetch(`${getApiBase()}${path.startsWith('/') ? path : `/${path}`}`, { headers })
   if (!res.ok) throw new Error(`Download failed (${res.status})`)
+  return res.blob()
+}
+
+export async function apiBlobPost(path: string, json: unknown): Promise<Blob> {
+  const headers = new Headers()
+  headers.set('X-Client-App', CLIENT_APP)
+  headers.set('Content-Type', 'application/json')
+  const token = getToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const res = await fetch(`${getApiBase()}${path.startsWith('/') ? path : `/${path}`}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(json),
+  })
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}))
+    const message =
+      (errBody as { error?: string; message?: string }).error ||
+      (errBody as { message?: string }).message ||
+      `Download failed (${res.status})`
+    throw new Error(message)
+  }
   return res.blob()
 }

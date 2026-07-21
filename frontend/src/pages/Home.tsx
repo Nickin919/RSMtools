@@ -18,10 +18,10 @@ const tools = [
   },
   {
     title: '750 I/O Configurator',
-    description: 'Build 750/751/753 I/O system BOMs.',
-    to: '#',
+    description: 'Build 750/751/753 I/O system BOMs. Works as a guest — browser autosave.',
+    to: '/io-system-configurator',
     requiresLogin: false,
-    available: false,
+    available: true,
   },
   {
     title: 'Literature library',
