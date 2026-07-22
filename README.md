@@ -1,22 +1,36 @@
 # RSM Tools
 
-PDF pricing contracts, master catalog upload (Admin/RSM), and auth. Backend: Node, Express, Prisma, PostgreSQL. Frontend: React, Vite, Tailwind (WAIGO design).
+Scaled-back WAGO field tools for RSM-style users. Optional login: guests get full tool use; login unlocks server-side saves (e.g. pricing contracts, literature kits).
 
-## Quick start (local)
+**Stack:** React + Vite SPA → shared [WAIGO](https://github.com/Nickin919/WAIGO) API (`api.connectwithwago.com`).  
+This repo is a **static host only** — no local product database.
 
-1. Copy `.env.example` to `.env` and set `DATABASE_URL` and `JWT_SECRET` (32+ chars).
-2. `npm run prisma:migrate` then `npx prisma db seed`.
-3. `npm run dev` (backend) and `cd frontend && npm run dev` (frontend).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for ownership and deploy notes.
 
-See [docs/BACKEND-SETUP.md](docs/BACKEND-SETUP.md) for details.
+## Features
 
-## Deploy to Railway
+- Pricing contracts (guest session or saved when signed in)
+- Product Finder
+- 750 I/O Configurator
+- Literature library + kit email
 
-1. **Push to GitHub:** Create a new repo at [github.com/new](https://github.com/new), then:
+## Local development
 
-   ```bash
-   git remote add origin https://github.com/YOUR_USERNAME/RSMTools.git
-   git push -u origin main
-   ```
+```bash
+cd frontend
+npm ci
+npm run dev
+```
 
-2. **Railway:** [Deploy from GitHub and add PostgreSQL](https://railway.app) → follow [docs/RAILWAY-DEPLOY.md](docs/RAILWAY-DEPLOY.md).
+Point at WAIGO with `VITE_API_URL` (see `frontend/.env.example` if present), or use the Vite proxy in `frontend/vite.config.ts`.
+
+## Production build
+
+```bash
+npm run build   # builds frontend/
+npm start       # serves frontend/dist via server.js
+```
+
+## Deploy
+
+Railway uses the root `Dockerfile` (SPA-only). Start command: `node server.js`.

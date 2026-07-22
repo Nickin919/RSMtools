@@ -1,8 +1,8 @@
 # Dependencies
 node_modules/
+frontend/node_modules/
 
 # Build output
-dist/
 frontend/dist/
 *.tsbuildinfo
 
@@ -22,8 +22,7 @@ Thumbs.db
 *.log
 npm-debug.log*
 
-# Uploads (local)
+# Legacy (removed in Phase 6 — ignore if recreated locally)
+dist/
 uploads/
-
-# Prisma
-prisma/migrations/**/migration_lock.toml
+prisma/

@@ -1,11 +1,11 @@
-# Railway deployment config
-# https://docs.railway.app/reference/config-as-code
+# Railway — SPA-only static host (no database, no prisma db push)
 
 [build]
 builder = "dockerfile"
 
 [deploy]
-# Run migrations then start server (pre-deploy often can't reach DB; start command runs in app container)
-startCommand = "/bin/sh -c \"npx prisma db push --accept-data-loss && node dist/server.js\""
+startCommand = "node server.js"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 10
+healthcheckPath = "/health"
+healthcheckTimeout = 30
